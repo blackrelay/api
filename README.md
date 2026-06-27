@@ -10,6 +10,8 @@ The Worker does not index Sui, call the World API or create canonical records.
 
 ## Development
 
+Once you have configured Cloudflare and setup your D1 database you **MUST** change `database_id` in wrangler.jsonc
+
 Install dependencies:
 ```sh
 pnpm install
