@@ -3,9 +3,16 @@ export async function readExportObject(bucket: R2Bucket, prefix: string, path: s
   return bucket.get(key);
 }
 
-export function r2Response(object: R2ObjectBody, cacheControl = "public, max-age=60, s-maxage=300"): Response {
+export function r2Response(
+  object: R2ObjectBody,
+  cacheControl = "public, max-age=60, s-maxage=300",
+  extraHeaders?: HeadersInit
+): Response {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
+  if (extraHeaders) {
+    new Headers(extraHeaders).forEach((value, key) => headers.set(key, value));
+  }
   headers.set("etag", object.httpEtag);
   headers.set("cache-control", cacheControl);
   headers.set("access-control-allow-origin", "*");

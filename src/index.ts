@@ -9,16 +9,27 @@ const exportFiles = new Set([
   "manifest.json",
   "catalog.json",
   "entities.jsonl",
+  "entities.jsonl.gz",
   "killmails.jsonl",
+  "killmails.jsonl.gz",
   "sources.jsonl",
+  "sources.jsonl.gz",
   "events.jsonl",
+  "events.jsonl.gz",
   "sui_objects.jsonl",
+  "sui_objects.jsonl.gz",
   "facts.jsonl",
+  "facts.jsonl.gz",
   "relations.jsonl",
+  "relations.jsonl.gz",
   "entity_sources.jsonl",
+  "entity_sources.jsonl.gz",
   "source_artefacts.jsonl",
+  "source_artefacts.jsonl.gz",
   "current_entities.jsonl",
+  "current_entities.jsonl.gz",
   "current_relations.jsonl",
+  "current_relations.jsonl.gz",
   "ops_freshness.json",
   "ops_cursors.json",
   "ops_sui_coverage.json",
@@ -88,7 +99,18 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   if (parts[1] === "exports" && parts.length === 3 && exportFiles.has(parts[2] ?? "")) {
-    const object = await readExportObject(env.EXPORTS, env.EXPORT_PREFIX, parts[2] ?? "");
+    const exportPath = parts[2] ?? "";
+    const object = await readExportObject(env.EXPORTS, env.EXPORT_PREFIX, exportPath);
+    if (!object && exportPath.endsWith(".jsonl")) {
+      const compressed = await readExportObject(env.EXPORTS, env.EXPORT_PREFIX, `${exportPath}.gz`);
+      if (compressed) {
+        return r2Response(compressed, "public, max-age=60, s-maxage=300", {
+          "content-type": "application/x-ndjson; charset=utf-8",
+          "content-encoding": "gzip",
+          "vary": "Accept-Encoding"
+        });
+      }
+    }
     if (!object) {
       return errorResponse("not_found", "Export object not found.", apiMeta, 404);
     }

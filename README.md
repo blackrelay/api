@@ -89,15 +89,20 @@ The Worker reads export objects from:
 registry/latest/manifest.json
 registry/latest/catalog.json
 registry/latest/entities.jsonl
+registry/latest/entities.jsonl.gz
 registry/latest/killmails.jsonl
 registry/latest/sources.jsonl
 registry/latest/events.jsonl
+registry/latest/events.jsonl.gz
 registry/latest/sui_objects.jsonl
+registry/latest/sui_objects.jsonl.gz
 registry/latest/facts.jsonl
+registry/latest/facts.jsonl.gz
 registry/latest/relations.jsonl
 registry/latest/entity_sources.jsonl
 registry/latest/source_artefacts.jsonl
 registry/latest/current_entities.jsonl
+registry/latest/current_entities.jsonl.gz
 registry/latest/current_relations.jsonl
 registry/latest/ops_freshness.json
 registry/latest/ops_cursors.json
@@ -107,7 +112,9 @@ registry/latest/ops_source_gaps.json
 
 `EXPORT_PREFIX` controls the prefix. The default is `registry`.
 
-Use `wrangler r2 object put --remote` for production uploads. Very large artefacts can exceed Wrangler's remote upload limit; publish those through R2's S3-compatible multipart upload path and keep the manifest and object set aligned. Query routes backed by D1 remain usable even when a raw export artefact still needs multipart publication.
+Use `wrangler r2 object put --remote` for production uploads. Very large raw artefacts can exceed Wrangler's remote upload limit. Publish those through R2's S3-compatible multipart upload path when S3 credentials are available or publish a same-name gzip artefact such as `facts.jsonl.gz`.
+
+When a `.jsonl` export object is missing and a matching `.jsonl.gz` object exists, the Worker serves the compressed artefact from the original `.jsonl` route with `Content-Encoding: gzip`. Query routes backed by D1 remain usable even when a raw export artefact still needs multipart publication.
 
 ## Public Routes
 
