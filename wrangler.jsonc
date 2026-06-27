@@ -17,8 +17,8 @@
   },
   "routes": [
     {
-      "pattern": "api.blackrelay.network",
-      "custom_domain": true
+      "pattern": "api.blackrelay.network/*",
+      "zone_name": "blackrelay.network"
     }
   ],
   "d1_databases": [
