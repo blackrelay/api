@@ -68,6 +68,18 @@ Windows:
 pnpm exec wrangler d1 migrations apply blackrelay_api --local
 ```
 
+For remote D1 imports, generate chunked SQL and disable explicit transactions:
+```sh
+pnpm export:sql -- --export-dir ./tmp/api-export-current --chunk-dir ./tmp/api-seed-chunks --chunk-max-bytes 16000000 --no-transactions
+```
+
+Windows:
+```powershell
+pnpm export:sql -- --export-dir .\tmp\api-export-current --chunk-dir .\tmp\api-seed-chunks --chunk-max-bytes 16000000 --no-transactions
+```
+
+The importer compacts oversized current-state rows for D1. Full source evidence remains in R2 exports.
+
 ## R2 Layout
 
 The Worker reads export objects from:
@@ -92,6 +104,8 @@ registry/latest/ops_source_gaps.json
 ```
 
 `EXPORT_PREFIX` controls the prefix. The default is `registry`.
+
+Use `wrangler r2 object put --remote` for production uploads. Very large artefacts can exceed Wrangler's remote upload limit; publish those through R2's S3-compatible multipart upload path and keep the manifest and object set aligned. Query routes backed by D1 remain usable even when a raw export artefact still needs multipart publication.
 
 ## Public Routes
 

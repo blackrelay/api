@@ -1,45 +1,60 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { createReadStream, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, createReadStream, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
 const exportDir = args["export-dir"] ?? args.dir;
 const out = args.out;
+const chunkDir = args["chunk-dir"];
+const chunkMaxBytes = parseByteSize(args["chunk-max-bytes"] ?? "8000000");
+const transactions = args["no-transactions"] !== "1";
+const sortSeparator = " | ";
+const maxD1BodyJSONBytes = 30_000;
 
-if (!exportDir || !out) {
+if (!exportDir || (!out && !chunkDir)) {
   console.error("Usage: pnpm export:sql -- --export-dir <registry-export-dir> --out <seed.sql>");
+  console.error("   or: pnpm export:sql -- --export-dir <registry-export-dir> --chunk-dir <seed-sql-dir> [--chunk-max-bytes <bytes>] [--no-transactions]");
   process.exit(2);
 }
 
-const statements = [
-  "BEGIN;",
-  "DELETE FROM api_documents;",
-  "DELETE FROM api_entities;",
-  "DELETE FROM api_sources;",
-  "DELETE FROM api_events;",
-  "DELETE FROM api_killmails;",
-  "DELETE FROM api_current;",
-  "DELETE FROM api_facts;",
-  "DELETE FROM api_relations;",
-  "DELETE FROM api_entity_sources;",
-  "DELETE FROM api_artefacts;",
-  "DELETE FROM api_source_gaps;"
-];
+async function main() {
+  const writer = new SQLWriter({ out, chunkDir, chunkMaxBytes, transactions });
+  const statements = {
+    push: (...values) => {
+      for (const value of values) {
+        writer.write(value);
+      }
+    }
+  };
 
-for (const fileName of ["catalog.json", "manifest.json"]) {
-  const path = join(exportDir, fileName);
-  const body = readFileSync(path, "utf8");
   statements.push(
-    insert("api_documents", {
-      path: fileName,
-      body_json: minifyJSON(body),
-      content_type: "application/json",
-      sha256: sha256(body)
-    })
+    "DELETE FROM api_documents;",
+    "DELETE FROM api_entities;",
+    "DELETE FROM api_sources;",
+    "DELETE FROM api_events;",
+    "DELETE FROM api_killmails;",
+    "DELETE FROM api_current;",
+    "DELETE FROM api_facts;",
+    "DELETE FROM api_relations;",
+    "DELETE FROM api_entity_sources;",
+    "DELETE FROM api_artefacts;",
+    "DELETE FROM api_source_gaps;"
   );
-}
+
+  for (const fileName of ["catalog.json", "manifest.json"]) {
+    const path = join(exportDir, fileName);
+    const body = readFileSync(path, "utf8");
+    statements.push(
+      insert("api_documents", {
+        path: fileName,
+        body_json: minifyJSON(body),
+        content_type: "application/json",
+        sha256: sha256(body)
+      })
+    );
+  }
 
 await readJSONL(join(exportDir, "entities.jsonl"), (row) => {
   const entity = parseRow(row);
@@ -57,7 +72,7 @@ await readJSONL(join(exportDir, "entities.jsonl"), (row) => {
       cycle: entity.cycle ?? null,
       body_json: JSON.stringify(entity),
       search_text: search,
-      sort_key: `${entity.name ?? entity.id}\u0000${entity.id}`
+      sort_key: sortKey(entity.name ?? entity.id, entity.id)
     })
   );
   const collection = collectionForEntityType(entity.entityType);
@@ -70,7 +85,7 @@ await readJSONL(join(exportDir, "entities.jsonl"), (row) => {
         cycle: entity.cycle ?? null,
         body_json: JSON.stringify(entity),
         search_text: search,
-        sort_key: `${entity.name ?? entity.id}\u0000${entity.id}`
+        sort_key: sortKey(entity.name ?? entity.id, entity.id)
       })
     );
   }
@@ -84,7 +99,7 @@ await readOptionalJSONL(join(exportDir, "sources.jsonl"), (row) => {
       source_kind: source.sourceKind ?? source.kind ?? null,
       environment: source.environment ?? null,
       body_json: JSON.stringify(source),
-      sort_key: `${source.sourceKind ?? source.kind ?? ""}\u0000${source.id}`
+      sort_key: sortKey(source.sourceKind ?? source.kind ?? "", source.id)
     })
   );
 });
@@ -117,7 +132,7 @@ await readOptionalJSONL(join(exportDir, "facts.jsonl"), (row) => {
       environment: fact.environment,
       cycle: fact.cycle ?? null,
       body_json: JSON.stringify(fact),
-      sort_key: `${fact.key}\u0000${fact.sourceId}\u0000${fact.entityId}`
+      sort_key: sortKey(fact.key, fact.sourceId, fact.entityId)
     })
   );
 });
@@ -134,7 +149,7 @@ await readOptionalJSONL(join(exportDir, "relations.jsonl"), (row) => {
       source_id: relation.sourceId,
       environment: relation.environment,
       body_json: JSON.stringify(relation),
-      sort_key: `${relation.predicate}\u0000${relation.objectEntityId}\u0000${relation.sourceId}`
+      sort_key: sortKey(relation.predicate, relation.objectEntityId, relation.sourceId)
     })
   );
 });
@@ -151,7 +166,7 @@ await readOptionalJSONL(join(exportDir, "entity_sources.jsonl"), (row) => {
       entity_id: entityId,
       source_id: source.id,
       body_json: JSON.stringify(source),
-      sort_key: `${source.kind ?? ""}\u0000${source.id}`
+      sort_key: sortKey(source.kind ?? "", source.id)
     })
   );
 });
@@ -167,7 +182,7 @@ await readOptionalJSONL(join(exportDir, "source_artefacts.jsonl"), (row) => {
       artefact_kind: artefact.artefactKind ?? artefact.kind ?? null,
       sha256: artefact.sha256 ?? null,
       body_json: JSON.stringify(artefact),
-      sort_key: `${artefact.extractedAt ?? artefact.createdAt ?? ""}\u0000${artefact.id}`
+      sort_key: sortKey(artefact.extractedAt ?? artefact.createdAt ?? "", artefact.id)
     })
   );
 });
@@ -186,9 +201,9 @@ await readOptionalJSONL(join(exportDir, "current_entities.jsonl"), (row) => {
       id: entity.id,
       environment: entity.environment,
       cycle: entity.cycle ?? null,
-      body_json: JSON.stringify(current),
+      body_json: currentBodyJSON(current, entity),
       search_text: search,
-      sort_key: `${entity.displayName ?? entity.name ?? entity.id}\u0000${entity.id}`
+      sort_key: sortKey(entity.displayName ?? entity.name ?? entity.id, entity.id)
     })
   );
 });
@@ -212,7 +227,7 @@ await readOptionalJSONL(join(exportDir, "current_relations.jsonl"), (row) => {
       cycle: relation.cycle ?? null,
       body_json: JSON.stringify(relation),
       search_text: search,
-      sort_key: `${relation.subjectDisplayName ?? relation.subjectEntityId}\u0000${relation.objectDisplayName ?? relation.objectEntityId}\u0000${id}`
+      sort_key: sortKey(relation.subjectDisplayName ?? relation.subjectEntityId, relation.objectDisplayName ?? relation.objectEntityId, id)
     })
   );
 });
@@ -270,9 +285,9 @@ for (const item of [
   });
 }
 
-statements.push("COMMIT;");
-writeFileSync(out, `${statements.join("\n")}\n`, "utf8");
-console.log(`Wrote ${out}`);
+  writer.close();
+  console.log(writer.summary());
+}
 
 function parseArgs(values) {
   const parsed = {};
@@ -291,6 +306,106 @@ function parseArgs(values) {
     }
   }
   return parsed;
+}
+
+function parseByteSize(value) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < 1_000_000) {
+    throw new Error("--chunk-max-bytes must be at least 1000000");
+  }
+  return parsed;
+}
+
+class SQLWriter {
+  constructor({ out, chunkDir, chunkMaxBytes, transactions }) {
+    this.out = out;
+    this.chunkDir = chunkDir;
+    this.chunkMaxBytes = chunkMaxBytes;
+    this.transactions = transactions;
+    this.buffer = [];
+    this.bufferBytes = 0;
+    this.chunkIndex = 0;
+    this.chunkBytes = 0;
+    this.files = [];
+
+    if (this.chunkDir) {
+      mkdirSync(this.chunkDir, { recursive: true });
+      rmSync(this.chunkDir, { recursive: true, force: true });
+      mkdirSync(this.chunkDir, { recursive: true });
+      this.openChunk();
+    } else {
+      writeFileSync(this.out, "", "utf8");
+      if (this.transactions) {
+        this.writeRaw("BEGIN;\n");
+      }
+    }
+  }
+
+  write(statement) {
+    const line = `${statement}\n`;
+    const transactionOverhead = this.transactions ? "BEGIN;\nCOMMIT;\n".length : 0;
+    if (this.chunkDir && this.chunkBytes > 0 && this.chunkBytes + Buffer.byteLength(line) + transactionOverhead > this.chunkMaxBytes) {
+      this.closeChunk();
+      this.openChunk();
+    }
+    this.writeRaw(line);
+  }
+
+  close() {
+    if (this.chunkDir) {
+      this.closeChunk();
+    } else {
+      if (this.transactions) {
+        this.writeRaw("COMMIT;\n");
+      }
+      this.flush();
+    }
+  }
+
+  summary() {
+    if (this.chunkDir) {
+      return `Wrote ${this.files.length} SQL chunk(s) to ${this.chunkDir}`;
+    }
+    return `Wrote ${this.out}`;
+  }
+
+  openChunk() {
+    const name = `${String(this.chunkIndex).padStart(4, "0")}.sql`;
+    this.currentPath = join(this.chunkDir, name);
+    this.files.push(this.currentPath);
+    this.chunkIndex += 1;
+    this.chunkBytes = 0;
+    writeFileSync(this.currentPath, "", "utf8");
+    if (this.transactions) {
+      this.writeRaw("BEGIN;\n");
+    }
+  }
+
+  closeChunk() {
+    if (this.transactions) {
+      this.writeRaw("COMMIT;\n");
+    }
+    this.flush();
+  }
+
+  writeRaw(value) {
+    const bytes = Buffer.byteLength(value);
+    this.buffer.push(value);
+    this.bufferBytes += bytes;
+    this.chunkBytes += bytes;
+    if (this.bufferBytes >= 1_000_000) {
+      this.flush();
+    }
+  }
+
+  flush() {
+    if (this.buffer.length === 0) {
+      return;
+    }
+    appendFileSync(this.chunkDir ? this.currentPath : this.out, this.buffer.join(""), "utf8");
+    this.buffer = [];
+    this.bufferBytes = 0;
+  }
 }
 
 async function readOptionalJSONL(path, onRow) {
@@ -336,7 +451,7 @@ function minifyJSON(value) {
 function insert(table, values) {
   const columns = Object.keys(values);
   const sqlValues = columns.map((column) => sqlLiteral(values[column]));
-  return `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${sqlValues.join(", ")});`;
+  return `INSERT OR REPLACE INTO ${table} (${columns.join(", ")}) VALUES (${sqlValues.join(", ")});`;
 }
 
 function insertOrReplace(table, values) {
@@ -353,6 +468,10 @@ function sqlLiteral(value) {
     return Number.isFinite(value) ? String(value) : "NULL";
   }
   return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function sortKey(...parts) {
+  return parts.map((part) => String(part ?? "")).join(sortSeparator);
 }
 
 function sha256(value) {
@@ -410,6 +529,19 @@ function currentSearchText(current, entity) {
     .toLowerCase();
 }
 
+function currentBodyJSON(current, entity) {
+  const body = JSON.stringify(current);
+  if (Buffer.byteLength(body) <= maxD1BodyJSONBytes) {
+    return body;
+  }
+  return JSON.stringify({
+    entity,
+    d1Compacted: true,
+    compactReason: "current row exceeded D1 statement size limits",
+    fullRecordExport: "registry/latest/current_entities.jsonl"
+  });
+}
+
 function relationCollection(relation) {
   if (relation.predicate === "owned_by") {
     return "ownership";
@@ -441,3 +573,5 @@ function collectionForEntityType(entityType) {
     route: "routes"
   }[entityType];
 }
+
+await main();
