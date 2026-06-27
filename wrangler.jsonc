@@ -1,0 +1,39 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "blackrelay-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-27",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "REGISTRY_ID": "blackrelay-api",
+    "API_VERSION": "v1",
+    "DEFAULT_ENVIRONMENT": "stillness",
+    "CURRENT_CYCLE": "6",
+    "EXPORT_PREFIX": "registry"
+  },
+  "routes": [
+    {
+      "pattern": "api.blackrelay.network/*",
+      "zone_name": "blackrelay.network"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "blackrelay_api",
+      "database_id": "d1fceebc-8e52-43da-97b9-8b48816f455f",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "EXPORTS",
+      "bucket_name": "blackrelay-registry-exports",
+      "preview_bucket_name": "blackrelay-registry-exports-preview"
+    }
+  ]
+}
