@@ -23,11 +23,23 @@ describe("query helpers", () => {
     });
   });
 
-  it("parses explicit cycle lists without uncycled compatibility rows", () => {
-    expect(parseCycleScope("5,6,6", 6)).toEqual({
+  it("accepts only the current cycle from explicit cycle lists", () => {
+    expect(parseCycleScope("6,6", 6)).toEqual({
       mode: "list",
-      cycles: [5, 6],
+      cycles: [6],
       includeUncycled: false
+    });
+    expect(parseCycleScope("5", 6)).toEqual({
+      mode: "current",
+      cycles: [6],
+      includeUncycled: true,
+      invalid: 'Unsupported cycle scope "5". Use current or 6.'
+    });
+    expect(parseCycleScope("all", 6)).toEqual({
+      mode: "current",
+      cycles: [6],
+      includeUncycled: true,
+      invalid: 'Unsupported cycle scope "all". Use current or 6.'
     });
   });
 

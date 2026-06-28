@@ -152,6 +152,10 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   const parts = path.split("/").filter(Boolean);
   const repository = new ApiRepository(env.DB);
   const apiMeta = meta(env);
+  const cycleScope = parseCycleScope(url.searchParams.get("cycles") ?? url.searchParams.get("cycle"), currentCycle(env));
+  if (cycleScope.invalid) {
+    return errorResponse("bad_request", cycleScope.invalid, apiMeta, 400);
+  }
 
   if (parts.length === 0 || path === "v1") {
     return jsonResponse(envelope(rootDocument(env), apiMeta));
@@ -217,7 +221,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   if ((parts[1] === "entities" || parts[1] === "search") && parts.length === 2) {
-    const page = await repository.listEntities(listOptions(url, env));
+    const page = await repository.listEntities({ ...listOptions(url, env), entityType: optional(url, "type") ?? optional(url, "entityType") });
     return jsonResponse(envelope(page.data, apiMeta, page.nextCursor));
   }
 
@@ -404,6 +408,7 @@ function listOptions(url: URL, env: Env) {
     environment: environment(url, env),
     cycles: parseCycleScope(url.searchParams.get("cycles") ?? url.searchParams.get("cycle"), currentCycle(env)),
     q: optional(url, "q"),
+    profile: optional(url, "profile"),
     limit: parseLimit(url.searchParams.get("limit")),
     cursor: optional(url, "cursor")
   };

@@ -56,14 +56,16 @@ export type ListOptions = {
   environment: string;
   cycles: CycleScope;
   q?: string | undefined;
+  profile?: string | undefined;
   limit: number;
   cursor?: string | undefined;
 };
 
 export type CycleScope = {
-  mode: "current" | "all" | "list";
+  mode: "current" | "list";
   cycles: number[];
   includeUncycled: boolean;
+  invalid?: string | undefined;
 };
 
 export const typedCollectionEntityTypes: Record<string, string> = {
@@ -137,18 +139,24 @@ export function parseLimit(value: string | null, defaultLimit = 50, maxLimit = 2
 }
 
 export function parseCycleScope(value: string | null, currentCycle: number): CycleScope {
-  if (!value || value === "current") {
+  const raw = value?.trim() ?? "";
+  if (!raw || raw.toLowerCase() === "current") {
     return { mode: "current", cycles: [currentCycle], includeUncycled: true };
   }
-  if (value === "all") {
-    return { mode: "all", cycles: [], includeUncycled: true };
-  }
-  const cycles = value
-    .split(",")
-    .map((part) => Number.parseInt(part.trim(), 10))
-    .filter((part) => Number.isInteger(part) && part > 0);
-  if (cycles.length === 0) {
-    return { mode: "current", cycles: [currentCycle], includeUncycled: true };
+
+  const parts = raw.split(",").map((part) => part.trim());
+  const cycles: number[] = [];
+  for (const part of parts) {
+    const parsed = Number.parseInt(part, 10);
+    if (!part || !Number.isInteger(parsed) || parsed !== currentCycle || String(parsed) !== part) {
+      return {
+        mode: "current",
+        cycles: [currentCycle],
+        includeUncycled: true,
+        invalid: `Unsupported cycle scope "${raw}". Use current or ${currentCycle}.`
+      };
+    }
+    cycles.push(parsed);
   }
   return { mode: "list", cycles: [...new Set(cycles)], includeUncycled: false };
 }
@@ -190,9 +198,6 @@ export function parseJSONRows<T extends { body_json: string }>(rows: T[]): unkno
 }
 
 export function buildCycleWhere(scope: CycleScope, columnName = "cycle"): { sql: string; params: unknown[] } {
-  if (scope.mode === "all") {
-    return { sql: "", params: [] };
-  }
   const placeholders = scope.cycles.map(() => "?").join(", ");
   if (scope.includeUncycled) {
     return {

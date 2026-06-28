@@ -60,6 +60,14 @@ export class ApiRepository {
       sql += " AND search_text LIKE ?";
       params.push(needle);
     }
+    if (options.entityType === "character") {
+      const profile = options.profile?.trim().toLowerCase();
+      if (profile === "known" || profile === "verified") {
+        sql += " AND json_extract(body_json, '$.derived.profile') IS NOT NULL";
+      } else if (profile === "placeholder") {
+        sql += " AND json_extract(body_json, '$.derived.profile') IS NULL";
+      }
+    }
     if (cursor) {
       sql += " AND (sort_key > ? OR (sort_key = ? AND id > ?))";
       params.push(cursor.key, cursor.key, cursor.id ?? "");
@@ -358,7 +366,7 @@ export class ApiRepository {
   }
 
   async metrics(): Promise<string> {
-    const [counts, currentCounts] = await Promise.all([
+    const [counts, currentCounts, currentCharacterCount, currentTribeCount] = await Promise.all([
       this.db.prepare(
         `SELECT
           (SELECT count(*) FROM api_entities) AS entities,
@@ -373,7 +381,29 @@ export class ApiRepository {
       .first<Record<string, number>>(),
       this.db
         .prepare("SELECT collection, count(*) AS total FROM api_current GROUP BY collection ORDER BY collection ASC")
-        .all<{ collection: string; total: number }>()
+        .all<{ collection: string; total: number }>(),
+      this.db
+        .prepare(
+          `SELECT count(*) AS total FROM (
+             SELECT DISTINCT
+               lower(coalesce(json_extract(body_json, '$.facts.character_address'), id))
+               || ':'
+               || lower(coalesce(json_extract(body_json, '$.entity.displayName'), json_extract(body_json, '$.entity.name'), id)) AS identity_key
+             FROM api_current
+             WHERE collection = 'characters'
+               AND json_extract(body_json, '$.derived.profile') IS NOT NULL
+           )`
+        )
+        .first<{ total: number }>(),
+      this.db
+        .prepare(
+          `SELECT count(*) AS total FROM (
+             SELECT DISTINCT coalesce(json_extract(body_json, '$.facts.tribe_id'), id) AS identity_key
+             FROM api_current
+             WHERE collection = 'tribes'
+           )`
+        )
+        .first<{ total: number }>()
     ]);
     const lines = [
       "# HELP blackrelay_api_build_info Static public API build marker.",
@@ -386,8 +416,14 @@ export class ApiRepository {
     }
     for (const row of currentCounts.results ?? []) {
       const name = `current_${row.collection.replace(/[^a-z0-9_]/g, "_")}`;
+      let total = Number(row.total) || 0;
+      if (row.collection === "characters") {
+        total = Number(currentCharacterCount?.total) || 0;
+      } else if (row.collection === "tribes") {
+        total = Number(currentTribeCount?.total) || 0;
+      }
       lines.push(`# TYPE blackrelay_api_${name} gauge`);
-      lines.push(`blackrelay_api_${name} ${Number(row.total) || 0}`);
+      lines.push(`blackrelay_api_${name} ${total}`);
     }
     return `${lines.join("\n")}\n`;
   }
