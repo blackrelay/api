@@ -34,8 +34,7 @@ describe("export-to-sql", () => {
         "--export-dir",
         exportDir,
         "--chunk-dir",
-        chunkDir,
-        "--no-transactions"
+        chunkDir
       ],
       { cwd: process.cwd(), stdio: "pipe" }
     );
@@ -43,6 +42,8 @@ describe("export-to-sql", () => {
     const sql = readFileSync(join(chunkDir, "0000.sql"));
     expect(sql.includes(0)).toBe(false);
     expect(sql.toString("utf8")).toContain("Alpha | character:stillness:1");
+    expect(sql.toString("utf8")).not.toContain("BEGIN;");
+    expect(sql.toString("utf8")).not.toContain("COMMIT;");
   });
 
   it("compacts oversized current entity bodies for D1 imports", () => {
@@ -258,5 +259,41 @@ describe("export-to-sql", () => {
     expect(sql).toContain("character:stillness:victim");
     expect(sql).toContain("92096");
     expect(sql).toContain("Caird [NPC] killed Victim Pilot");
+  });
+
+  it("does not derive removed legacy cycles for older killmail rows", () => {
+    const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
+    const exportDir = join(root, "export");
+    const chunkDir = join(root, "chunks");
+    mkdirSync(exportDir, { recursive: true });
+
+    writeFileSync(join(exportDir, "catalog.json"), JSON.stringify({ schemaVersion: "registry.export.v1" }));
+    writeFileSync(join(exportDir, "manifest.json"), JSON.stringify({ schemaVersion: "registry.export_manifest.v1" }));
+    writeFileSync(join(exportDir, "entities.jsonl"), "");
+    writeFileSync(
+      join(exportDir, "killmails.jsonl"),
+      `${JSON.stringify({
+        id: "killmail:stillness:legacy",
+        environment: "stillness",
+        occurredAt: "2026-06-24T23:59:59.000Z",
+        sourceIds: ["source:fixture"]
+      })}\n`
+    );
+
+    execFileSync(
+      process.execPath,
+      [
+        join(process.cwd(), "scripts", "export-to-sql.mjs"),
+        "--export-dir",
+        exportDir,
+        "--chunk-dir",
+        chunkDir
+      ],
+      { cwd: process.cwd(), stdio: "pipe" }
+    );
+
+    const sql = readFileSync(join(chunkDir, "0000.sql"), "utf8");
+    expect(sql).toContain("'killmail:stillness:legacy', 'stillness', NULL, '2026-06-24T23:59:59.000Z'");
+    expect(sql).not.toContain("'killmail:stillness:legacy', 'stillness', 5");
   });
 });

@@ -9,7 +9,7 @@ const exportDir = args["export-dir"] ?? args.dir;
 const out = args.out;
 const chunkDir = args["chunk-dir"];
 const chunkMaxBytes = parseByteSize(args["chunk-max-bytes"] ?? "8000000");
-const transactions = args["no-transactions"] !== "1";
+const transactions = args.transactions === "1" || (!chunkDir && args["no-transactions"] !== "1");
 const sortSeparator = " | ";
 const maxD1BodyJSONBytes = 30_000;
 const entityDisplayByID = new Map();
@@ -17,7 +17,7 @@ const tribeDisplayByToken = new Map();
 
 if (!exportDir || (!out && !chunkDir)) {
   console.error("Usage: pnpm export:sql -- --export-dir <registry-export-dir> --out <seed.sql>");
-  console.error("   or: pnpm export:sql -- --export-dir <registry-export-dir> --chunk-dir <seed-sql-dir> [--chunk-max-bytes <bytes>] [--no-transactions]");
+  console.error("   or: pnpm export:sql -- --export-dir <registry-export-dir> --chunk-dir <seed-sql-dir> [--chunk-max-bytes <bytes>] [--transactions]");
   process.exit(2);
 }
 
@@ -476,9 +476,6 @@ function cycleForTimestamp(value) {
   }
   if (time >= Date.parse("2026-06-25T09:00:00Z")) {
     return 6;
-  }
-  if (time >= Date.parse("2026-03-11T09:00:00Z")) {
-    return 5;
   }
   return null;
 }
