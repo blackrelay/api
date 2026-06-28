@@ -15,6 +15,7 @@ import {
   type SourceGapRow,
   type SourceRow
 } from "./query";
+import { dedupeCurrentCharacters, dedupeCurrentTribes } from "./current";
 
 export type PageResult = {
   data: unknown[];
@@ -61,7 +62,7 @@ export class ApiRepository {
     }
     if (cursor) {
       sql += " AND (sort_key > ? OR (sort_key = ? AND id > ?))";
-      params.push(cursor, cursor, cursor);
+      params.push(cursor.key, cursor.key, cursor.id ?? "");
     }
     sql += " ORDER BY sort_key ASC, id ASC LIMIT ?";
     params.push(options.limit + 1);
@@ -150,6 +151,66 @@ export class ApiRepository {
   }
 
   async listCurrent(collection: string, options: ListOptions): Promise<PageResult> {
+    if (collection === "characters") {
+      return this.listCurrentDeduped("characters", options, dedupeCurrentCharacters);
+    }
+    if (collection === "tribes") {
+      return this.listCurrentDeduped("tribes", options, dedupeCurrentTribes);
+    }
+    const result = await this.listCurrentRows(collection, options, options.limit);
+    return pageFromRows(result, options.limit, (row) => row.sort_key, parseJSONRows);
+  }
+
+  private async listCurrentDeduped(
+    collection: string,
+    options: ListOptions,
+    dedupe: (rows: unknown[]) => unknown[]
+  ): Promise<PageResult> {
+    const rawLimit = Math.min(200, Math.max(options.limit * 2, 75));
+    let cursor = options.cursor;
+    let cursorBeforeNextUnique: string | undefined;
+    const rawRecords: unknown[] = [];
+
+    for (let page = 0; page < 100; page += 1) {
+      const result = await this.listCurrentRows(collection, { ...options, cursor }, rawLimit);
+      if (result.results.length === 0) {
+        return {
+          data: dedupe(rawRecords).slice(0, options.limit),
+          nextCursor: undefined
+        };
+      }
+
+      for (const row of result.results.slice(0, rawLimit)) {
+        const record = JSON.parse(row.body_json) as unknown;
+        rawRecords.push(record);
+        const deduped = dedupe(rawRecords);
+        if (deduped.length > options.limit) {
+          rawRecords.pop();
+          return {
+            data: dedupe(rawRecords).slice(0, options.limit),
+            nextCursor: cursorBeforeNextUnique
+          };
+        }
+        cursorBeforeNextUnique = encodeCursor(row.sort_key, row.id);
+      }
+
+      const nextCursor = nextCursorFromRows(result, rawLimit, (row) => row.sort_key);
+      if (!nextCursor) {
+        return {
+          data: dedupe(rawRecords).slice(0, options.limit),
+          nextCursor: undefined
+        };
+      }
+      cursor = nextCursor;
+    }
+
+    return {
+      data: dedupe(rawRecords).slice(0, options.limit),
+      nextCursor: cursorBeforeNextUnique
+    };
+  }
+
+  private async listCurrentRows(collection: string, options: ListOptions, limit: number): Promise<D1ListResult<CurrentRow>> {
     const cycle = buildCycleWhere(options.cycles);
     const cursor = decodeCursor(options.cursor);
     const params: unknown[] = [collection, options.environment, ...cycle.params];
@@ -163,12 +224,11 @@ export class ApiRepository {
     }
     if (cursor) {
       sql += " AND (sort_key > ? OR (sort_key = ? AND id > ?))";
-      params.push(cursor, cursor, cursor);
+      params.push(cursor.key, cursor.key, cursor.id ?? "");
     }
     sql += " ORDER BY sort_key ASC, id ASC LIMIT ?";
-    params.push(options.limit + 1);
-    const result = await this.db.prepare(sql).bind(...params).all<CurrentRow>();
-    return pageFromRows(result, options.limit, (row) => row.sort_key, parseJSONRows);
+    params.push(limit + 1);
+    return this.db.prepare(sql).bind(...params).all<CurrentRow>();
   }
 
   async listSources(environment: string, limit: number): Promise<PageResult> {
@@ -216,7 +276,7 @@ export class ApiRepository {
     }
     if (cursor) {
       sql += " AND (occurred_at < ? OR (occurred_at = ? AND id < ?))";
-      params.push(cursor, cursor, cursor);
+      params.push(cursor.key, cursor.key, cursor.id ?? "");
     }
     sql += " ORDER BY occurred_at DESC, id DESC LIMIT ?";
     params.push(options.limit + 1);
@@ -262,7 +322,7 @@ export class ApiRepository {
     }
     if (cursor) {
       sql += " AND (occurred_at < ? OR (occurred_at = ? AND id < ?))";
-      params.push(cursor, cursor, cursor);
+      params.push(cursor.key, cursor.key, cursor.id ?? "");
     }
     sql += " ORDER BY occurred_at DESC, id DESC LIMIT ?";
     params.push(options.limit + 1);
@@ -284,8 +344,8 @@ export class ApiRepository {
   }
 
   async metrics(): Promise<string> {
-    const counts = await this.db
-      .prepare(
+    const [counts, currentCounts] = await Promise.all([
+      this.db.prepare(
         `SELECT
           (SELECT count(*) FROM api_entities) AS entities,
           (SELECT count(*) FROM api_sources) AS sources,
@@ -296,7 +356,11 @@ export class ApiRepository {
           (SELECT count(*) FROM api_artefacts) AS artefacts,
           (SELECT count(*) FROM api_source_gaps) AS source_gaps`
       )
-      .first<Record<string, number>>();
+      .first<Record<string, number>>(),
+      this.db
+        .prepare("SELECT collection, count(*) AS total FROM api_current GROUP BY collection ORDER BY collection ASC")
+        .all<{ collection: string; total: number }>()
+    ]);
     const lines = [
       "# HELP blackrelay_api_build_info Static public API build marker.",
       "# TYPE blackrelay_api_build_info gauge",
@@ -305,6 +369,11 @@ export class ApiRepository {
     for (const [name, value] of Object.entries(counts ?? {})) {
       lines.push(`# TYPE blackrelay_api_${name} gauge`);
       lines.push(`blackrelay_api_${name} ${Number(value) || 0}`);
+    }
+    for (const row of currentCounts.results ?? []) {
+      const name = `current_${row.collection.replace(/[^a-z0-9_]/g, "_")}`;
+      lines.push(`# TYPE blackrelay_api_${name} gauge`);
+      lines.push(`blackrelay_api_${name} ${Number(row.total) || 0}`);
     }
     return `${lines.join("\n")}\n`;
   }
@@ -325,9 +394,20 @@ function pageFromRows<T extends { id: string }>(
   parse: (rows: T[]) => unknown[]
 ): PageResult {
   const rows = result.results.slice(0, limit);
-  const extra = result.results.length > limit ? result.results[limit] : undefined;
   return {
     data: parse(rows),
-    nextCursor: extra ? encodeCursor(cursorValue(extra)) : undefined
+    nextCursor: nextCursorFromRows(result, limit, cursorValue)
   };
+}
+
+function nextCursorFromRows<T extends { id: string }>(
+  result: D1ListResult<T>,
+  limit: number,
+  cursorValue: (row: T) => string
+): string | undefined {
+  if (result.results.length <= limit) {
+    return undefined;
+  }
+  const lastReturned = result.results[Math.max(0, limit - 1)];
+  return lastReturned ? encodeCursor(cursorValue(lastReturned), lastReturned.id) : undefined;
 }

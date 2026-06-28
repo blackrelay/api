@@ -153,19 +153,36 @@ export function parseCycleScope(value: string | null, currentCycle: number): Cyc
   return { mode: "list", cycles: [...new Set(cycles)], includeUncycled: false };
 }
 
-export function decodeCursor(value: string | undefined): string | undefined {
+export type DecodedCursor = {
+  key: string;
+  id?: string | undefined;
+};
+
+export function decodeCursor(value: string | undefined): DecodedCursor | undefined {
   if (!value) {
     return undefined;
   }
   try {
-    return new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+    const decoded = new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+    try {
+      const parsed = JSON.parse(decoded) as Partial<DecodedCursor>;
+      if (typeof parsed.key === "string" && parsed.key) {
+        return {
+          key: parsed.key,
+          id: typeof parsed.id === "string" && parsed.id ? parsed.id : undefined
+        };
+      }
+    } catch {
+      // Older API cursors encoded only the sort key as plain text.
+    }
+    return decoded ? { key: decoded } : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function encodeCursor(value: string): string {
-  return btoa(value);
+export function encodeCursor(key: string, id?: string): string {
+  return btoa(JSON.stringify({ key, ...(id ? { id } : {}) }));
 }
 
 export function parseJSONRows<T extends { body_json: string }>(rows: T[]): unknown[] {

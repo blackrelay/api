@@ -12,6 +12,8 @@ const chunkMaxBytes = parseByteSize(args["chunk-max-bytes"] ?? "8000000");
 const transactions = args["no-transactions"] !== "1";
 const sortSeparator = " | ";
 const maxD1BodyJSONBytes = 30_000;
+const entityDisplayByID = new Map();
+const tribeDisplayByToken = new Map();
 
 if (!exportDir || (!out && !chunkDir)) {
   console.error("Usage: pnpm export:sql -- --export-dir <registry-export-dir> --out <seed.sql>");
@@ -58,6 +60,7 @@ async function main() {
 
 await readJSONL(join(exportDir, "entities.jsonl"), (row) => {
   const entity = parseRow(row);
+  registerEntityDisplay(entity);
   const search = [entity.id, entity.slug, entity.name, entity.displayName, entity.summary, entity.entityType]
     .filter(Boolean)
     .join(" ")
@@ -75,20 +78,6 @@ await readJSONL(join(exportDir, "entities.jsonl"), (row) => {
       sort_key: sortKey(entity.name ?? entity.id, entity.id)
     })
   );
-  const collection = collectionForEntityType(entity.entityType);
-  if (collection) {
-    statements.push(
-      insert("api_current", {
-        collection,
-        id: entity.id,
-        environment: entity.environment,
-        cycle: entity.cycle ?? null,
-        body_json: JSON.stringify(entity),
-        search_text: search,
-        sort_key: sortKey(entity.name ?? entity.id, entity.id)
-      })
-    );
-  }
 });
 
 await readOptionalJSONL(join(exportDir, "sources.jsonl"), (row) => {
@@ -188,7 +177,7 @@ await readOptionalJSONL(join(exportDir, "source_artefacts.jsonl"), (row) => {
 });
 
 await readOptionalJSONL(join(exportDir, "current_entities.jsonl"), (row) => {
-  const current = parseRow(row);
+  const current = enrichCurrent(parseRow(row));
   const entity = current.entity ?? current;
   const collection = collectionForEntityType(entity.entityType);
   if (!collection) {
@@ -529,17 +518,234 @@ function currentSearchText(current, entity) {
     .toLowerCase();
 }
 
+function registerEntityDisplay(entity) {
+  const id = String(entity.id ?? "").trim();
+  const displayName = String(entity.displayName ?? entity.name ?? "").trim();
+  if (!id || !displayName) {
+    return;
+  }
+  entityDisplayByID.set(id, displayName);
+  if (entity.entityType === "tribe" && !isPlaceholderDisplay("tribe", displayName)) {
+    const token = entityToken(id) || String(entity.tribeId ?? "").trim();
+    const environment = String(entity.environment ?? "").trim();
+    if (token && environment) {
+      tribeDisplayByToken.set(`${environment}:${token}`, displayName);
+    }
+  }
+}
+
+function enrichCurrent(current) {
+  const enriched = JSON.parse(JSON.stringify(current));
+  const enrichedEntity = enriched.entity ?? enriched;
+  const entityType = String(enrichedEntity.entityType ?? "");
+  const entityDisplay = resolveDisplayName(String(enrichedEntity.id ?? ""), entityType, String(enrichedEntity.displayName ?? enrichedEntity.name ?? ""));
+  if (entityDisplay) {
+    enrichedEntity.displayName = entityDisplay;
+    enrichedEntity.name = entityDisplay;
+  }
+  for (const key of ["tribe", "owner", "system"]) {
+    const related = enriched.derived?.[key];
+    if (!related || typeof related !== "object") {
+      continue;
+    }
+    const display = resolveDisplayName(String(related.entityId ?? ""), String(related.entityType ?? key), String(related.displayName ?? ""));
+    if (display) {
+      related.displayName = display;
+    }
+  }
+  for (const key of ["outgoingRelations", "incomingRelations"]) {
+    if (!Array.isArray(enriched[key])) {
+      continue;
+    }
+    for (const relation of enriched[key]) {
+      const subjectDisplay = resolveDisplayName(
+        String(relation.subjectEntityId ?? ""),
+        String(relation.subjectEntityType ?? ""),
+        String(relation.subjectDisplayName ?? "")
+      );
+      if (subjectDisplay) {
+        relation.subjectDisplayName = subjectDisplay;
+      }
+      const objectDisplay = resolveDisplayName(
+        String(relation.objectEntityId ?? ""),
+        String(relation.objectEntityType ?? ""),
+        String(relation.objectDisplayName ?? "")
+      );
+      if (objectDisplay) {
+        relation.objectDisplayName = objectDisplay;
+      }
+    }
+  }
+  return enriched;
+}
+
+function resolveDisplayName(id, entityType, currentDisplay) {
+  const exact = entityDisplayByID.get(id);
+  if (exact && (!currentDisplay || isPlaceholderDisplay(entityType, currentDisplay))) {
+    return exact;
+  }
+  if (entityType === "tribe") {
+    const token = entityToken(id);
+    const environment = entityEnvironment(id);
+    const tribeDisplay = token && environment ? tribeDisplayByToken.get(`${environment}:${token}`) : undefined;
+    if (tribeDisplay && (!currentDisplay || isPlaceholderDisplay(entityType, currentDisplay))) {
+      return tribeDisplay;
+    }
+  }
+  return currentDisplay;
+}
+
+function isPlaceholderDisplay(entityType, value) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return true;
+  }
+  if (entityType === "tribe") {
+    return /^Tribe \d+$/i.test(text);
+  }
+  if (entityType === "system") {
+    return /^System \d+$/i.test(text);
+  }
+  if (entityType === "item" || entityType === "material") {
+    return /^Input type \d+$/i.test(text);
+  }
+  return false;
+}
+
+function entityToken(id) {
+  const index = id.lastIndexOf(":");
+  return index >= 0 ? id.slice(index + 1) : id;
+}
+
+function entityEnvironment(id) {
+  const parts = id.split(":");
+  return parts.length >= 3 ? parts[1] : "";
+}
+
 function currentBodyJSON(current, entity) {
   const body = JSON.stringify(current);
   if (Buffer.byteLength(body) <= maxD1BodyJSONBytes) {
     return body;
   }
-  return JSON.stringify({
+  const compact = {
     entity,
+    facts: compactObject(current.facts, { maxKeys: 120, maxString: 800, maxArray: 32 }),
+    derived: compactObject(current.derived, { maxKeys: 80, maxString: 800, maxArray: 24 }),
+    sourceIds: compactStringArray(current.sourceIds, 80),
+    outgoingRelations: compactRelations(current.outgoingRelations),
+    incomingRelations: compactRelations(current.incomingRelations),
     d1Compacted: true,
     compactReason: "current row exceeded D1 statement size limits",
     fullRecordExport: "registry/latest/current_entities.jsonl"
-  });
+  };
+  let compactBody = JSON.stringify(removeEmptyFields(compact));
+  if (Buffer.byteLength(compactBody) <= maxD1BodyJSONBytes) {
+    return compactBody;
+  }
+
+  compact.outgoingRelations = undefined;
+  compact.incomingRelations = undefined;
+  compactBody = JSON.stringify(removeEmptyFields(compact));
+  if (Buffer.byteLength(compactBody) <= maxD1BodyJSONBytes) {
+    return compactBody;
+  }
+
+  compact.facts = compactObject(current.facts, { maxKeys: 48, maxString: 300, maxArray: 12 });
+  compact.derived = compactObject(current.derived, { maxKeys: 32, maxString: 300, maxArray: 12 });
+  return JSON.stringify(removeEmptyFields(compact));
+}
+
+function compactRelations(value) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const usefulPredicates = new Set([
+    "belongs_to",
+    "owned_by",
+    "located_in",
+    "located_at",
+    "deployed_in",
+    "observed_in",
+    "links_to",
+    "observed_between",
+    "occurred_in",
+    "victim",
+    "killer",
+    "reported_by"
+  ]);
+  return value
+    .filter((relation) => usefulPredicates.has(String(relation?.predicate ?? "")))
+    .slice(0, 32)
+    .map((relation) =>
+      removeEmptyFields({
+        id: relation.id,
+        subjectEntityId: relation.subjectEntityId,
+        subjectEntityType: relation.subjectEntityType,
+        subjectDisplayName: relation.subjectDisplayName,
+        predicate: relation.predicate,
+        objectEntityId: relation.objectEntityId,
+        objectEntityType: relation.objectEntityType,
+        objectDisplayName: relation.objectDisplayName,
+        sourceId: relation.sourceId,
+        confidence: relation.confidence,
+        environment: relation.environment,
+        cycle: relation.cycle
+      })
+    );
+}
+
+function compactObject(value, options, depth = 0) {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return value.length > options.maxString ? `${value.slice(0, options.maxString)}...` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, options.maxArray).map((item) => compactObject(item, options, depth + 1)).filter((item) => item !== undefined);
+  }
+  if (typeof value !== "object" || depth >= 4) {
+    return undefined;
+  }
+  const out = {};
+  for (const [key, item] of Object.entries(value).slice(0, options.maxKeys)) {
+    const compacted = compactObject(item, options, depth + 1);
+    if (compacted !== undefined) {
+      out[key] = compacted;
+    }
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
+function compactStringArray(value, limit) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const out = [...new Set(value.map((item) => String(item ?? "").trim()).filter(Boolean))].sort().slice(0, limit);
+  return out.length === 0 ? undefined : out;
+}
+
+function removeEmptyFields(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (item === undefined || item === null) {
+      continue;
+    }
+    if (Array.isArray(item) && item.length === 0) {
+      continue;
+    }
+    if (!Array.isArray(item) && typeof item === "object" && Object.keys(item).length === 0) {
+      continue;
+    }
+    out[key] = item;
+  }
+  return out;
 }
 
 function relationCollection(relation) {

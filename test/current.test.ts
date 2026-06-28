@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dedupeCurrentCharacters } from "../src/current";
+import { dedupeCurrentCharacters, dedupeCurrentTribes } from "../src/current";
 
 describe("current entity normalisation", () => {
   it("collapses duplicate character identities and keeps relations for the winning row", () => {
@@ -60,5 +60,60 @@ describe("current entity normalisation", () => {
     expect(deduped[0].facts.object_id).toBe("0xlegacy");
     expect(deduped[0].sourceIds).toEqual(["source:sui:sui-testnet:graphql", "source:sui:sui-testnet:graphql:objects"]);
     expect(deduped[0].outgoingRelations.map((relation) => relation.subjectEntityId)).toEqual(["character:stillness:2112092610"]);
+  });
+
+  it("collapses duplicate tribe identities and prefers named public profile rows", () => {
+    const rows = [
+      {
+        entity: {
+          id: "tribe:stillness:1000167",
+          entityType: "tribe",
+          displayName: "Clonebank 86",
+          environment: "stillness",
+          cycle: 6,
+          updatedAt: "2026-06-28T10:30:45.105Z"
+        },
+        facts: {
+          tribe_id: "1000167",
+          tag: "CO86"
+        },
+        sourceIds: ["source:world-api:tribes"]
+      },
+      {
+        entity: {
+          id: "tribe:liminality:1000167",
+          entityType: "tribe",
+          displayName: "Tribe 1000167",
+          environment: "stillness",
+          cycle: 6,
+          updatedAt: "2026-06-27T11:08:46.577316Z"
+        },
+        facts: {
+          tribe_id: "1000167",
+          source_event_kind: "character.created"
+        },
+        incomingRelations: [
+          {
+            id: "relation:character:liminality:2112000001:belongs_to:tribe:liminality:1000167",
+            subjectEntityId: "character:liminality:2112000001",
+            subjectEntityType: "character",
+            subjectDisplayName: "fingolfin",
+            predicate: "belongs_to",
+            objectEntityId: "tribe:liminality:1000167",
+            objectEntityType: "tribe",
+            objectDisplayName: "Tribe 1000167"
+          }
+        ],
+        sourceIds: ["source:sui:sui-testnet:graphql"]
+      }
+    ];
+
+    const deduped = dedupeCurrentTribes(rows);
+
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0].entity.id).toBe("tribe:stillness:1000167");
+    expect(deduped[0].entity.displayName).toBe("Clonebank 86");
+    expect(deduped[0].facts.source_event_kind).toBe("character.created");
+    expect(deduped[0].sourceIds).toEqual(["source:sui:sui-testnet:graphql", "source:world-api:tribes"]);
   });
 });

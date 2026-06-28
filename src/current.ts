@@ -58,6 +58,40 @@ export function dedupeCurrentCharacters(rows: unknown[]): unknown[] {
   return out;
 }
 
+export function dedupeCurrentTribes(rows: unknown[]): unknown[] {
+  const out: CurrentEntityRow[] = [];
+  const byIdentity = new Map<string, number>();
+
+  for (const row of rows) {
+    if (!isCurrentEntityRow(row) || row.entity?.entityType !== "tribe") {
+      out.push(row as CurrentEntityRow);
+      continue;
+    }
+    const key = tribeIdentityKey(row);
+    if (!key) {
+      out.push(row);
+      continue;
+    }
+    const existingIndex = byIdentity.get(key);
+    if (existingIndex === undefined) {
+      byIdentity.set(key, out.length);
+      out.push(row);
+      continue;
+    }
+    const existing = out[existingIndex];
+    if (!existing) {
+      byIdentity.set(key, out.length);
+      out.push(row);
+      continue;
+    }
+    const winner = preferTribeRow(existing, row);
+    const loser = winner === existing ? row : existing;
+    out[existingIndex] = mergeCurrentTribeRows(winner, loser);
+  }
+
+  return out;
+}
+
 function isCurrentEntityRow(value: unknown): value is CurrentEntityRow {
   return typeof value === "object" && value !== null && typeof (value as CurrentEntityRow).entity === "object";
 }
@@ -72,9 +106,32 @@ function characterIdentityKey(row: CurrentEntityRow): string {
   return `${environment}:${address}:${name}`;
 }
 
+function tribeIdentityKey(row: CurrentEntityRow): string {
+  const tribeID = String(row.facts?.tribe_id ?? tokenFromEntityID(row.entity?.id ?? "")).trim();
+  const environment = String(row.entity?.environment || "").trim().toLowerCase();
+  if (!tribeID || !environment) {
+    return "";
+  }
+  return `${environment}:${tribeID}`;
+}
+
 function preferCharacterRow(left: CurrentEntityRow, right: CurrentEntityRow): CurrentEntityRow {
   const leftScore = characterRowScore(left);
   const rightScore = characterRowScore(right);
+  if (rightScore !== leftScore) {
+    return rightScore > leftScore ? right : left;
+  }
+  const leftUpdated = Date.parse(String(left.entity?.updatedAt || ""));
+  const rightUpdated = Date.parse(String(right.entity?.updatedAt || ""));
+  if (Number.isFinite(leftUpdated) || Number.isFinite(rightUpdated)) {
+    return (Number.isFinite(rightUpdated) ? rightUpdated : 0) > (Number.isFinite(leftUpdated) ? leftUpdated : 0) ? right : left;
+  }
+  return String(right.entity?.id || "") > String(left.entity?.id || "") ? right : left;
+}
+
+function preferTribeRow(left: CurrentEntityRow, right: CurrentEntityRow): CurrentEntityRow {
+  const leftScore = tribeRowScore(left);
+  const rightScore = tribeRowScore(right);
   if (rightScore !== leftScore) {
     return rightScore > leftScore ? right : left;
   }
@@ -104,6 +161,30 @@ function characterRowScore(row: CurrentEntityRow): number {
   return score;
 }
 
+function tribeRowScore(row: CurrentEntityRow): number {
+  let score = 0;
+  const name = String(row.entity?.displayName || row.entity?.name || "").trim();
+  const tribeID = String(row.facts?.tribe_id ?? tokenFromEntityID(row.entity?.id ?? "")).trim();
+  if (name && name !== `Tribe ${tribeID}`) {
+    score += 1000;
+  }
+  for (const key of ["tag", "ticker", "description", "url", "aliases"]) {
+    const value = row.facts?.[key];
+    if (value !== undefined && String(value).trim() !== "") {
+      score += 25;
+    }
+  }
+  const idScope = String(row.entity?.id || "").split(":")[1] ?? "";
+  if (String(row.entity?.environment || "") === idScope) {
+    score += 10;
+  }
+  const cycle = Number(row.entity?.cycle ?? 0);
+  if (Number.isFinite(cycle)) {
+    score += cycle;
+  }
+  return score;
+}
+
 function mergeCurrentCharacterRows(winner: CurrentEntityRow, loser: CurrentEntityRow): CurrentEntityRow {
   return {
     ...winner,
@@ -111,6 +192,24 @@ function mergeCurrentCharacterRows(winner: CurrentEntityRow, loser: CurrentEntit
     sourceIds: mergeStrings(winner.sourceIds, loser.sourceIds),
     outgoingRelations: mergeRelations(winner.outgoingRelations, loser.outgoingRelations, (relation) => relation.subjectEntityId === winner.entity?.id),
     incomingRelations: mergeRelations(winner.incomingRelations, loser.incomingRelations, (relation) => relation.objectEntityId === winner.entity?.id)
+  };
+}
+
+function mergeCurrentTribeRows(winner: CurrentEntityRow, loser: CurrentEntityRow): CurrentEntityRow {
+  return {
+    ...winner,
+    facts: mergeFacts(winner.facts, loser.facts),
+    sourceIds: mergeStrings(winner.sourceIds, loser.sourceIds),
+    outgoingRelations: mergeRelations(winner.outgoingRelations, loser.outgoingRelations, (relation) => relation.subjectEntityId === winner.entity?.id),
+    incomingRelations: mergeRelations(winner.incomingRelations, loser.incomingRelations, (relation) => {
+      if (relation.objectEntityId === winner.entity?.id) {
+        return true;
+      }
+      if (relation.objectEntityType !== "tribe") {
+        return false;
+      }
+      return tokenFromEntityID(relation.objectEntityId ?? "") === tokenFromEntityID(winner.entity?.id ?? "");
+    })
   };
 }
 
@@ -152,4 +251,13 @@ function mergeRelations(
 function stringFact(row: CurrentEntityRow, key: string): string {
   const value = row.facts?.[key];
   return typeof value === "string" ? value.trim() : "";
+}
+
+function tokenFromEntityID(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const index = trimmed.lastIndexOf(":");
+  return index >= 0 ? trimmed.slice(index + 1) : trimmed;
 }

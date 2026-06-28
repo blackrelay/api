@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildCycleWhere, currentCollections, parseCycleScope, parseLimit, typedCollectionEntityTypes } from "../src/query";
+import {
+  buildCycleWhere,
+  currentCollections,
+  decodeCursor,
+  encodeCursor,
+  parseCycleScope,
+  parseLimit,
+  typedCollectionEntityTypes
+} from "../src/query";
 
 describe("query helpers", () => {
   it("defaults missing cycles to the current cycle and uncycled compatibility rows", () => {
@@ -34,6 +42,19 @@ describe("query helpers", () => {
     expect(parseLimit(null)).toBe(50);
     expect(parseLimit("500")).toBe(200);
     expect(parseLimit("bad")).toBe(50);
+  });
+
+  it("round-trips page cursors with sort key and row id", () => {
+    expect(decodeCursor(encodeCursor("Alpha | character:1", "character:1"))).toEqual({
+      key: "Alpha | character:1",
+      id: "character:1"
+    });
+  });
+
+  it("accepts legacy plain sort-key cursors", () => {
+    expect(decodeCursor(btoa("Alpha | character:1"))).toEqual({
+      key: "Alpha | character:1"
+    });
   });
 
   it("registers the public typed and current collection routes", () => {
