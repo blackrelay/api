@@ -16,6 +16,7 @@ import {
   type SourceRow
 } from "./query";
 import { dedupeCurrentCharacters, dedupeCurrentTribes, needsTribeLabelRepair, repairCurrentTribeLabels } from "./current";
+import { collectKillmailEntityIDs, enrichKillmailRecords, type KillmailEntityLookup } from "./killmails";
 
 export type PageResult = {
   data: unknown[];
@@ -24,6 +25,13 @@ export type PageResult = {
 
 type D1ListResult<T> = {
   results: T[];
+};
+
+type EntityLookupRow = {
+  id: string;
+  name: string;
+  entity_type: string;
+  body_json: string;
 };
 
 export class ApiRepository {
@@ -349,12 +357,20 @@ export class ApiRepository {
     sql += " ORDER BY occurred_at DESC, id DESC LIMIT ?";
     params.push(options.limit + 1);
     const result = await this.db.prepare(sql).bind(...params).all<KillmailRow>();
-    return pageFromRows(result, options.limit, (row) => row.occurred_at, parseJSONRows);
+    const page = pageFromRows(result, options.limit, (row) => row.occurred_at, parseJSONRows);
+    return {
+      ...page,
+      data: await this.enrichKillmails(page.data)
+    };
   }
 
   async getKillmail(id: string): Promise<unknown | undefined> {
     const row = await this.db.prepare("SELECT body_json FROM api_killmails WHERE id = ?").bind(id).first<{ body_json: string }>();
-    return row ? (JSON.parse(row.body_json) as unknown) : undefined;
+    if (!row) {
+      return undefined;
+    }
+    const [killmail] = await this.enrichKillmails([JSON.parse(row.body_json) as unknown]);
+    return killmail;
   }
 
   async listSourceGaps(environment: string): Promise<PageResult> {
@@ -435,6 +451,47 @@ export class ApiRepository {
       .first<EntityRow>();
     return row ?? undefined;
   }
+
+  private async enrichKillmails(records: unknown[]): Promise<unknown[]> {
+    const ids = collectKillmailEntityIDs(records);
+    if (ids.length === 0) {
+      return records;
+    }
+
+    const entities = new Map<string, KillmailEntityLookup>();
+    for (let index = 0; index < ids.length; index += 250) {
+      const chunk = ids.slice(index, index + 250);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const result = await this.db
+        .prepare(`SELECT id, name, entity_type, body_json FROM api_entities WHERE id IN (${placeholders})`)
+        .bind(...chunk)
+        .all<EntityLookupRow>();
+      for (const row of result.results ?? []) {
+        entities.set(row.id, {
+          id: row.id,
+          entityType: row.entity_type,
+          displayName: displayNameFromEntityRow(row)
+        });
+      }
+    }
+
+    return enrichKillmailRecords(records, entities);
+  }
+}
+
+function displayNameFromEntityRow(row: EntityLookupRow): string {
+  try {
+    const body = JSON.parse(row.body_json) as { displayName?: unknown; name?: unknown };
+    if (typeof body.displayName === "string" && body.displayName.trim()) {
+      return body.displayName.trim();
+    }
+    if (typeof body.name === "string" && body.name.trim()) {
+      return body.name.trim();
+    }
+  } catch {
+    // Fall back to the indexed name below.
+  }
+  return row.name;
 }
 
 function pageFromRows<T extends { id: string }>(

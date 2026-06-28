@@ -261,6 +261,71 @@ describe("export-to-sql", () => {
     expect(sql).toContain("Caird [NPC] killed Victim Pilot");
   });
 
+  it("omits removed prototype sources from public indexes", () => {
+    const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
+    const exportDir = join(root, "export");
+    const chunkDir = join(root, "chunks");
+    mkdirSync(exportDir, { recursive: true });
+
+    writeFileSync(join(exportDir, "catalog.json"), JSON.stringify({ schemaVersion: "registry.export.v1" }));
+    writeFileSync(join(exportDir, "manifest.json"), JSON.stringify({ schemaVersion: "registry.export_manifest.v1" }));
+    writeFileSync(join(exportDir, "entities.jsonl"), "");
+    writeFileSync(
+      join(exportDir, "sources.jsonl"),
+      [
+        {
+          id: "source:tribe-identities:stillness",
+          kind: "community_report",
+          environment: "stillness",
+          title: "Reviewed public tribe identity example"
+        },
+        {
+          id: "source:datahub:types:stillness",
+          kind: "datahub",
+          environment: "stillness",
+          title: "Public Datahub type metadata"
+        },
+        {
+          id: "source:static-client:types:stillness",
+          kind: "static_client_data",
+          environment: "stillness",
+          title: "Static-client type metadata"
+        }
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n") + "\n"
+    );
+    writeFileSync(
+      join(exportDir, "facts.jsonl"),
+      [
+        { entityId: "item:stillness:42", key: "type_id", sourceId: "source:datahub:types:stillness", environment: "stillness" },
+        { entityId: "item:stillness:type:42", key: "type_id", sourceId: "source:static-client:types:stillness", environment: "stillness" }
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n") + "\n"
+    );
+
+    execFileSync(
+      process.execPath,
+      [
+        join(process.cwd(), "scripts", "export-to-sql.mjs"),
+        "--export-dir",
+        exportDir,
+        "--chunk-dir",
+        chunkDir,
+        "--no-transactions"
+      ],
+      { cwd: process.cwd(), stdio: "pipe" }
+    );
+
+    const sql = readFileSync(join(chunkDir, "0000.sql"), "utf8");
+    expect(sql).not.toContain("Reviewed public tribe identity example");
+    expect(sql).not.toContain("Public Datahub type metadata");
+    expect(sql).not.toContain("source:tribe-identities:stillness");
+    expect(sql).not.toContain("source:datahub:types:stillness");
+    expect(sql).toContain("source:static-client:types:stillness");
+  });
+
   it("does not derive removed legacy cycles for older killmail rows", () => {
     const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
     const exportDir = join(root, "export");

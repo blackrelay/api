@@ -14,6 +14,7 @@ const sortSeparator = " | ";
 const maxD1BodyJSONBytes = 30_000;
 const entityDisplayByID = new Map();
 const tribeDisplayByToken = new Map();
+const removedPublicSourceIDs = new Set(["source:tribe-identities:stillness", "source:datahub:types:stillness"]);
 
 if (!exportDir || (!out && !chunkDir)) {
   console.error("Usage: pnpm export:sql -- --export-dir <registry-export-dir> --out <seed.sql>");
@@ -82,6 +83,9 @@ await readJSONL(join(exportDir, "entities.jsonl"), (row) => {
 
 await readOptionalJSONL(join(exportDir, "sources.jsonl"), (row) => {
   const source = parseRow(row);
+  if (isRemovedPublicSource(source.id)) {
+    return;
+  }
   statements.push(
     insert("api_sources", {
       id: source.id,
@@ -113,6 +117,9 @@ await readOptionalJSONL(join(exportDir, "events.jsonl"), (row) => {
 
 await readOptionalJSONL(join(exportDir, "facts.jsonl"), (row) => {
   const fact = parseRow(row);
+  if (isRemovedPublicSource(fact.sourceId)) {
+    return;
+  }
   statements.push(
     insert("api_facts", {
       entity_id: fact.entityId,
@@ -128,6 +135,9 @@ await readOptionalJSONL(join(exportDir, "facts.jsonl"), (row) => {
 
 await readOptionalJSONL(join(exportDir, "relations.jsonl"), (row) => {
   const relation = parseRow(row);
+  if (isRemovedPublicSource(relation.sourceId)) {
+    return;
+  }
   const id = relation.id ?? relationID(relation);
   statements.push(
     insert("api_relations", {
@@ -150,6 +160,9 @@ await readOptionalJSONL(join(exportDir, "entity_sources.jsonl"), (row) => {
   if (!entityId || !source?.id) {
     return;
   }
+  if (isRemovedPublicSource(source.id)) {
+    return;
+  }
   statements.push(
     insert("api_entity_sources", {
       entity_id: entityId,
@@ -162,6 +175,9 @@ await readOptionalJSONL(join(exportDir, "entity_sources.jsonl"), (row) => {
 
 await readOptionalJSONL(join(exportDir, "source_artefacts.jsonl"), (row) => {
   const artefact = parseRow(row);
+  if (isRemovedPublicSource(artefact.sourceId)) {
+    return;
+  }
   statements.push(
     insert("api_artefacts", {
       id: artefact.id,
@@ -437,6 +453,10 @@ function parseRow(row) {
 
 function minifyJSON(value) {
   return JSON.stringify(JSON.parse(value));
+}
+
+function isRemovedPublicSource(sourceID) {
+  return typeof sourceID === "string" && removedPublicSourceIDs.has(sourceID);
 }
 
 function insert(table, values) {
