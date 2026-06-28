@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dedupeCurrentCharacters, dedupeCurrentTribes } from "../src/current";
+import { dedupeCurrentCharacters, dedupeCurrentTribes, needsTribeLabelRepair, repairCurrentTribeLabels } from "../src/current";
 
 describe("current entity normalisation", () => {
   it("collapses duplicate character identities and keeps relations for the winning row", () => {
@@ -115,5 +115,57 @@ describe("current entity normalisation", () => {
     expect(deduped[0].entity.displayName).toBe("Clonebank 86");
     expect(deduped[0].facts.source_event_kind).toBe("character.created");
     expect(deduped[0].sourceIds).toEqual(["source:sui:sui-testnet:graphql", "source:world-api:tribes"]);
+  });
+
+  it("repairs embedded placeholder tribe labels from current tribe metadata", () => {
+    const rows = [
+      {
+        entity: {
+          id: "character:stillness:2112093154",
+          entityType: "character",
+          displayName: "0-XFL-4Y3D",
+          environment: "stillness",
+          cycle: 6
+        },
+        derived: {
+          tribe: {
+            entityId: "tribe:stillness:1000167",
+            entityType: "tribe",
+            displayName: "Tribe 1000167"
+          }
+        },
+        outgoingRelations: [
+          {
+            subjectEntityId: "character:stillness:2112093154",
+            subjectEntityType: "character",
+            subjectDisplayName: "0-XFL-4Y3D",
+            predicate: "belongs_to",
+            objectEntityId: "tribe:stillness:1000167",
+            objectEntityType: "tribe",
+            objectDisplayName: "Tribe 1000167"
+          }
+        ]
+      }
+    ];
+    const tribeRows = [
+      {
+        entity: {
+          id: "tribe:stillness:1000167",
+          entityType: "tribe",
+          displayName: "Clonebank 86",
+          environment: "stillness",
+          cycle: 6
+        },
+        facts: {
+          tribe_id: "1000167"
+        }
+      }
+    ];
+
+    expect(needsTribeLabelRepair(rows)).toBe(true);
+    const repaired = repairCurrentTribeLabels(rows, tribeRows);
+
+    expect(repaired[0].derived.tribe.displayName).toBe("Clonebank 86");
+    expect(repaired[0].outgoingRelations[0].objectDisplayName).toBe("Clonebank 86");
   });
 });

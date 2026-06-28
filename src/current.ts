@@ -18,9 +18,20 @@ type CurrentEntityRow = {
 type CurrentRelation = {
   id?: string;
   subjectEntityId?: string;
+  subjectEntityType?: string;
+  subjectDisplayName?: string;
   objectEntityId?: string;
+  objectEntityType?: string;
+  objectDisplayName?: string;
   predicate?: string;
   sourceId?: string;
+  [key: string]: unknown;
+};
+
+type RelatedEntity = {
+  entityId?: string;
+  entityType?: string;
+  displayName?: string;
   [key: string]: unknown;
 };
 
@@ -90,6 +101,87 @@ export function dedupeCurrentTribes(rows: unknown[]): unknown[] {
   }
 
   return out;
+}
+
+export function needsTribeLabelRepair(rows: unknown[]): boolean {
+  for (const row of rows) {
+    if (!isCurrentEntityRow(row)) {
+      continue;
+    }
+    if (row.entity?.entityType === "tribe" && isPlaceholderTribeDisplay(String(row.entity?.displayName ?? row.entity?.name ?? ""))) {
+      return true;
+    }
+    const derivedTribe = relatedEntity(row, "tribe");
+    if (derivedTribe && isPlaceholderTribeDisplay(String(derivedTribe.displayName ?? ""))) {
+      return true;
+    }
+    for (const relation of [...(row.outgoingRelations ?? []), ...(row.incomingRelations ?? [])]) {
+      if (relationIsTribe(relation, "subject") && isPlaceholderTribeDisplay(String(relation.subjectDisplayName ?? ""))) {
+        return true;
+      }
+      if (relationIsTribe(relation, "object") && isPlaceholderTribeDisplay(String(relation.objectDisplayName ?? ""))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function repairCurrentTribeLabels(rows: unknown[], tribeRows: unknown[]): unknown[] {
+  const displays = tribeDisplayIndex(tribeRows);
+  if (displays.size === 0) {
+    return rows;
+  }
+
+  for (const row of rows) {
+    if (!isCurrentEntityRow(row)) {
+      continue;
+    }
+    const environment = String(row.entity?.environment ?? "").trim().toLowerCase();
+
+    if (row.entity?.entityType === "tribe") {
+      const display = resolveTribeDisplay(displays, String(row.entity.id ?? ""), String(row.entity.displayName ?? row.entity.name ?? ""), environment);
+      if (display) {
+        row.entity.displayName = display;
+        row.entity.name = display;
+      }
+    }
+
+    const derivedTribe = relatedEntity(row, "tribe");
+    if (derivedTribe) {
+      const display = resolveTribeDisplay(displays, String(derivedTribe.entityId ?? ""), String(derivedTribe.displayName ?? ""), environment);
+      if (display) {
+        derivedTribe.displayName = display;
+      }
+    }
+
+    for (const relation of [...(row.outgoingRelations ?? []), ...(row.incomingRelations ?? [])]) {
+      if (relationIsTribe(relation, "subject")) {
+        const display = resolveTribeDisplay(
+          displays,
+          String(relation.subjectEntityId ?? ""),
+          String(relation.subjectDisplayName ?? ""),
+          environment
+        );
+        if (display) {
+          relation.subjectDisplayName = display;
+        }
+      }
+      if (relationIsTribe(relation, "object")) {
+        const display = resolveTribeDisplay(
+          displays,
+          String(relation.objectEntityId ?? ""),
+          String(relation.objectDisplayName ?? ""),
+          environment
+        );
+        if (display) {
+          relation.objectDisplayName = display;
+        }
+      }
+    }
+  }
+
+  return rows;
 }
 
 function isCurrentEntityRow(value: unknown): value is CurrentEntityRow {
@@ -165,7 +257,7 @@ function tribeRowScore(row: CurrentEntityRow): number {
   let score = 0;
   const name = String(row.entity?.displayName || row.entity?.name || "").trim();
   const tribeID = String(row.facts?.tribe_id ?? tokenFromEntityID(row.entity?.id ?? "")).trim();
-  if (name && name !== `Tribe ${tribeID}`) {
+  if (name && !isPlaceholderTribeDisplay(name, tribeID)) {
     score += 1000;
   }
   for (const key of ["tag", "ticker", "description", "url", "aliases"]) {
@@ -183,6 +275,80 @@ function tribeRowScore(row: CurrentEntityRow): number {
     score += cycle;
   }
   return score;
+}
+
+function tribeDisplayIndex(rows: unknown[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const row of rows) {
+    if (!isCurrentEntityRow(row) || row.entity?.entityType !== "tribe") {
+      continue;
+    }
+    const id = String(row.entity.id ?? "").trim();
+    const environment = String(row.entity.environment ?? "").trim().toLowerCase();
+    const tribeID = String(row.facts?.tribe_id ?? tokenFromEntityID(id)).trim();
+    const display = String(row.entity.displayName ?? row.entity.name ?? "").trim();
+    if (!display || isPlaceholderTribeDisplay(display, tribeID)) {
+      continue;
+    }
+    if (id) {
+      out.set(id.toLowerCase(), display);
+    }
+    if (environment && tribeID) {
+      out.set(`${environment}:${tribeID}`, display);
+    }
+  }
+  return out;
+}
+
+function resolveTribeDisplay(displays: Map<string, string>, entityID: string, currentDisplay: string, fallbackEnvironment: string): string {
+  const trimmedID = entityID.trim();
+  const display = currentDisplay.trim();
+  if (display && !isPlaceholderTribeDisplay(display)) {
+    return display;
+  }
+  const exact = displays.get(trimmedID.toLowerCase());
+  if (exact) {
+    return exact;
+  }
+  const token = tokenFromEntityID(trimmedID);
+  const environment = entityEnvironment(trimmedID) || fallbackEnvironment;
+  if (environment && token) {
+    return displays.get(`${environment.toLowerCase()}:${token}`) ?? "";
+  }
+  return "";
+}
+
+function relatedEntity(row: CurrentEntityRow, key: string): RelatedEntity | undefined {
+  const derived = row.derived;
+  if (!derived || typeof derived !== "object" || Array.isArray(derived)) {
+    return undefined;
+  }
+  const value = (derived as Record<string, unknown>)[key];
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as RelatedEntity) : undefined;
+}
+
+function relationIsTribe(relation: CurrentRelation, side: "subject" | "object"): boolean {
+  const entityID = side === "subject" ? relation.subjectEntityId : relation.objectEntityId;
+  const entityType = side === "subject" ? relation.subjectEntityType : relation.objectEntityType;
+  return entityType === "tribe" || String(entityID ?? "").startsWith("tribe:");
+}
+
+function isPlaceholderTribeDisplay(value: string, tribeID = "\\d+"): boolean {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return true;
+  }
+  const pattern = tribeID === "\\d+" ? /^Tribe \d+$/i : new RegExp(`^Tribe ${escapeRegExp(tribeID)}$`, "i");
+  return pattern.test(text);
+}
+
+function entityEnvironment(id: string): string {
+  const parts = id.trim().split(":");
+  return parts.length >= 3 ? parts[1] ?? "" : "";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function mergeCurrentCharacterRows(winner: CurrentEntityRow, loser: CurrentEntityRow): CurrentEntityRow {

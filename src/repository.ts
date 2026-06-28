@@ -15,7 +15,7 @@ import {
   type SourceGapRow,
   type SourceRow
 } from "./query";
-import { dedupeCurrentCharacters, dedupeCurrentTribes } from "./current";
+import { dedupeCurrentCharacters, dedupeCurrentTribes, needsTribeLabelRepair, repairCurrentTribeLabels } from "./current";
 
 export type PageResult = {
   data: unknown[];
@@ -151,14 +151,18 @@ export class ApiRepository {
   }
 
   async listCurrent(collection: string, options: ListOptions): Promise<PageResult> {
+    let page: PageResult;
     if (collection === "characters") {
-      return this.listCurrentDeduped("characters", options, dedupeCurrentCharacters);
+      page = await this.listCurrentDeduped("characters", options, dedupeCurrentCharacters);
+      return this.repairCurrentPage(page, options);
     }
     if (collection === "tribes") {
-      return this.listCurrentDeduped("tribes", options, dedupeCurrentTribes);
+      page = await this.listCurrentDeduped("tribes", options, dedupeCurrentTribes);
+      return this.repairCurrentPage(page, options);
     }
     const result = await this.listCurrentRows(collection, options, options.limit);
-    return pageFromRows(result, options.limit, (row) => row.sort_key, parseJSONRows);
+    page = pageFromRows(result, options.limit, (row) => row.sort_key, parseJSONRows);
+    return this.repairCurrentPage(page, options);
   }
 
   private async listCurrentDeduped(
@@ -229,6 +233,17 @@ export class ApiRepository {
     sql += " ORDER BY sort_key ASC, id ASC LIMIT ?";
     params.push(limit + 1);
     return this.db.prepare(sql).bind(...params).all<CurrentRow>();
+  }
+
+  private async repairCurrentPage(page: PageResult, options: ListOptions): Promise<PageResult> {
+    if (!needsTribeLabelRepair(page.data)) {
+      return page;
+    }
+    const tribeRows = await this.listCurrentRows("tribes", { ...options, q: undefined, cursor: undefined }, 500);
+    return {
+      ...page,
+      data: repairCurrentTribeLabels(page.data, parseJSONRows(tribeRows.results))
+    };
   }
 
   async listSources(environment: string, limit: number): Promise<PageResult> {
