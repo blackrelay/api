@@ -1,6 +1,6 @@
 /// <reference path="../worker-configuration.d.ts" />
 
-import { emptyResponse, envelope, errorResponse, jsonResponse, withHead, type ApiMeta } from "./http";
+import { emptyResponse, envelope, errorResponse, jsonResponse, withCors, withHead, type ApiMeta } from "./http";
 import { currentCollectionEntityTypes, currentCollections, parseCycleScope, parseLimit, typedCollectionEntityTypes } from "./query";
 import { ApiRepository } from "./repository";
 import { readExportObject, r2Response } from "./r2";
@@ -116,10 +116,10 @@ export default {
   async fetch(request, env, ctx): Promise<Response> {
     void ctx;
     try {
-      return withHead(request, await handleRequest(request, env));
+      return withCors(withHead(request, await handleRequest(request, env)));
     } catch (error) {
       console.error(JSON.stringify({ level: "error", message: "unhandled request error", error: error instanceof Error ? error.message : String(error) }));
-      return errorResponse("internal_error", "Internal server error.", meta(env), 500);
+      return withCors(errorResponse("internal_error", "Internal server error.", meta(env), 500));
     }
   }
 } satisfies ExportedHandler<Env>;

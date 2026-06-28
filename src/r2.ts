@@ -15,8 +15,8 @@ export function r2Response(
   }
   headers.set("etag", object.httpEtag);
   headers.set("cache-control", cacheControl);
-  headers.set("access-control-allow-origin", "*");
-  headers.set("x-content-type-options", "nosniff");
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("X-Content-Type-Options", "nosniff");
   if (!headers.has("content-type")) {
     headers.set("content-type", "application/octet-stream");
   }

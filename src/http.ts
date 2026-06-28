@@ -11,36 +11,49 @@ export type ErrorCode =
   | "not_ready";
 
 const baseHeaders = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, HEAD, OPTIONS",
-  "access-control-allow-headers": "Content-Type",
-  "access-control-max-age": "86400",
-  "x-content-type-options": "nosniff"
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "86400",
+  "X-Content-Type-Options": "nosniff"
 } as const;
+
+function applyBaseHeaders(headers: Headers): Headers {
+  for (const [key, value] of Object.entries(baseHeaders)) {
+    headers.set(key, value);
+  }
+  return headers;
+}
+
+export function withCors(response: Response): Response {
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: applyBaseHeaders(new Headers(response.headers))
+  });
+}
 
 export function jsonResponse(
   body: unknown,
   init: ResponseInit = {},
   cacheControl = "public, max-age=30, s-maxage=60"
 ): Response {
+  const headers = applyBaseHeaders(new Headers(init.headers));
+  headers.set("content-type", "application/json; charset=utf-8");
+  headers.set("cache-control", cacheControl);
+
   return new Response(JSON.stringify(body, null, 2), {
     ...init,
-    headers: {
-      ...baseHeaders,
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": cacheControl,
-      ...init.headers
-    }
+    headers
   });
 }
 
 export function emptyResponse(init: ResponseInit = {}): Response {
+  const headers = applyBaseHeaders(new Headers(init.headers));
+
   return new Response(null, {
     ...init,
-    headers: {
-      ...baseHeaders,
-      ...init.headers
-    }
+    headers
   });
 }
 
