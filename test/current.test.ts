@@ -168,4 +168,52 @@ describe("current entity normalisation", () => {
     expect(repaired[0].derived.tribe.displayName).toBe("Clonebank 86");
     expect(repaired[0].outgoingRelations[0].objectDisplayName).toBe("Clonebank 86");
   });
+
+  it("repairs tribe labels when legacy IDs use a different entity namespace", () => {
+    const rows = [
+      {
+        entity: {
+          id: "character:stillness:2112093154",
+          entityType: "character",
+          displayName: "0-XFL-4Y3D",
+          environment: "stillness",
+          cycle: 6
+        },
+        derived: {
+          tribe: {
+            entityId: "tribe:liminality:1000167",
+            entityType: "tribe",
+            displayName: "Tribe 1000167"
+          }
+        },
+        outgoingRelations: [
+          {
+            subjectEntityId: "character:stillness:2112093154",
+            subjectEntityType: "character",
+            subjectDisplayName: "0-XFL-4Y3D",
+            predicate: "belongs_to",
+            objectEntityId: "tribe:liminality:1000167",
+            objectEntityType: "tribe",
+            objectDisplayName: "Tribe 1000167"
+          }
+        ]
+      }
+    ];
+    const tribeRows = [
+      {
+        entity: {
+          id: "tribe:stillness:1000167",
+          entityType: "tribe",
+          displayName: "Clonebank 86",
+          environment: "stillness",
+          cycle: 6
+        }
+      }
+    ];
+
+    const repaired = repairCurrentTribeLabels(rows, tribeRows);
+
+    expect(repaired[0].derived.tribe.displayName).toBe("Clonebank 86");
+    expect(repaired[0].outgoingRelations[0].objectDisplayName).toBe("Clonebank 86");
+  });
 });

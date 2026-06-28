@@ -172,7 +172,6 @@ export class ApiRepository {
   ): Promise<PageResult> {
     const rawLimit = Math.min(200, Math.max(options.limit * 2, 75));
     let cursor = options.cursor;
-    let cursorBeforeNextUnique: string | undefined;
     const rawRecords: unknown[] = [];
 
     for (let page = 0; page < 100; page += 1) {
@@ -184,18 +183,18 @@ export class ApiRepository {
         };
       }
 
-      for (const row of result.results.slice(0, rawLimit)) {
+      const rows = result.results.slice(0, rawLimit);
+      for (const [index, row] of rows.entries()) {
         const record = JSON.parse(row.body_json) as unknown;
         rawRecords.push(record);
         const deduped = dedupe(rawRecords);
-        if (deduped.length > options.limit) {
-          rawRecords.pop();
+        if (deduped.length >= options.limit) {
+          const hasMoreRows = index < rows.length - 1 || result.results.length > rawLimit;
           return {
-            data: dedupe(rawRecords).slice(0, options.limit),
-            nextCursor: cursorBeforeNextUnique
+            data: deduped.slice(0, options.limit),
+            nextCursor: hasMoreRows ? encodeCursor(row.sort_key, row.id) : undefined
           };
         }
-        cursorBeforeNextUnique = encodeCursor(row.sort_key, row.id);
       }
 
       const nextCursor = nextCursorFromRows(result, rawLimit, (row) => row.sort_key);
@@ -210,7 +209,7 @@ export class ApiRepository {
 
     return {
       data: dedupe(rawRecords).slice(0, options.limit),
-      nextCursor: cursorBeforeNextUnique
+      nextCursor: undefined
     };
   }
 
@@ -239,7 +238,7 @@ export class ApiRepository {
     if (!needsTribeLabelRepair(page.data)) {
       return page;
     }
-    const tribeRows = await this.listCurrentRows("tribes", { ...options, q: undefined, cursor: undefined }, 500);
+    const tribeRows = await this.listCurrentRows("tribes", { ...options, q: undefined, cursor: undefined }, 1000);
     return {
       ...page,
       data: repairCurrentTribeLabels(page.data, parseJSONRows(tribeRows.results))

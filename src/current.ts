@@ -296,6 +296,9 @@ function tribeDisplayIndex(rows: unknown[]): Map<string, string> {
     if (environment && tribeID) {
       out.set(`${environment}:${tribeID}`, display);
     }
+    if (tribeID) {
+      out.set(tribeID, display);
+    }
   }
   return out;
 }
@@ -313,7 +316,19 @@ function resolveTribeDisplay(displays: Map<string, string>, entityID: string, cu
   const token = tokenFromEntityID(trimmedID);
   const environment = entityEnvironment(trimmedID) || fallbackEnvironment;
   if (environment && token) {
-    return displays.get(`${environment.toLowerCase()}:${token}`) ?? "";
+    const scoped = displays.get(`${environment.toLowerCase()}:${token}`);
+    if (scoped) {
+      return scoped;
+    }
+  }
+  if (fallbackEnvironment && token) {
+    const scoped = displays.get(`${fallbackEnvironment.toLowerCase()}:${token}`);
+    if (scoped) {
+      return scoped;
+    }
+  }
+  if (token) {
+    return displays.get(token) ?? "";
   }
   return "";
 }

@@ -214,4 +214,49 @@ describe("export-to-sql", () => {
     expect(sql).toContain("INSERT OR REPLACE INTO api_entities");
     expect(sql).not.toContain("INSERT OR REPLACE INTO api_current");
   });
+
+  it("indexes semantic killmail fields from public export rows", () => {
+    const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
+    const exportDir = join(root, "export");
+    const chunkDir = join(root, "chunks");
+    mkdirSync(exportDir, { recursive: true });
+
+    writeFileSync(join(exportDir, "catalog.json"), JSON.stringify({ schemaVersion: "registry.export.v1" }));
+    writeFileSync(join(exportDir, "manifest.json"), JSON.stringify({ schemaVersion: "registry.export_manifest.v1" }));
+    writeFileSync(join(exportDir, "entities.jsonl"), "");
+    writeFileSync(
+      join(exportDir, "killmails.jsonl"),
+      `${JSON.stringify({
+        id: "killmail:stillness:310",
+        kind: "killmail",
+        environment: "stillness",
+        occurredAt: "2026-06-28T10:56:59.000Z",
+        sourceIds: ["source:fixture"],
+        system: { entityId: "system:stillness:30001001", entityType: "system", displayName: "ILC-7R7", confidence: "verified" },
+        victim: { entityId: "character:stillness:victim", entityType: "character", displayName: "Victim Pilot", confidence: "verified" },
+        killer: { entityId: "enemy:stillness:type:92096", entityType: "enemy", typeId: "92096", displayName: "Caird [NPC]", isNpc: true, confidence: "probable" },
+        reporter: { entityType: "character", displayName: "Unknown", confidence: "unknown" },
+        summaryText: "Caird [NPC] killed Victim Pilot"
+      })}\n`
+    );
+
+    execFileSync(
+      process.execPath,
+      [
+        join(process.cwd(), "scripts", "export-to-sql.mjs"),
+        "--export-dir",
+        exportDir,
+        "--chunk-dir",
+        chunkDir,
+        "--no-transactions"
+      ],
+      { cwd: process.cwd(), stdio: "pipe" }
+    );
+
+    const sql = readFileSync(join(chunkDir, "0000.sql"), "utf8");
+    expect(sql).toContain("system:stillness:30001001");
+    expect(sql).toContain("character:stillness:victim");
+    expect(sql).toContain("92096");
+    expect(sql).toContain("Caird [NPC] killed Victim Pilot");
+  });
 });

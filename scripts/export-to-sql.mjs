@@ -229,12 +229,14 @@ await readOptionalJSONL(join(exportDir, "killmails.jsonl"), (row) => {
       environment: killmail.environment,
       cycle: cycleForTimestamp(killmail.occurredAt),
       occurred_at: killmail.occurredAt,
-      system_id: killmail.systemId ?? null,
-      victim_character_id: killmail.victimCharacterId ?? null,
-      killer_character_id: killmail.killerCharacterId ?? null,
-      killer_type_id: killmail.killerTypeId ?? null,
-      reporter_character_id: killmail.reporterCharacterId ?? null,
-      npc: killmail.killerTypeId ? 1 : 0,
+      system_id: killmail.systemId ?? killmail.system?.entityId ?? killmail.system?.rawId ?? null,
+      victim_character_id: killmail.victimCharacterId ?? killmail.victim?.entityId ?? killmail.victim?.rawId ?? null,
+      killer_character_id:
+        killmail.killerCharacterId ??
+        (killmail.killer?.entityType === "character" ? (killmail.killer?.entityId ?? killmail.killer?.rawId ?? null) : null),
+      killer_type_id: killmail.killerTypeId ?? killmail.killer?.typeId ?? null,
+      reporter_character_id: killmail.reporterCharacterId ?? killmail.reporter?.entityId ?? killmail.reporter?.rawId ?? null,
+      npc: killmail.killerTypeId || killmail.killer?.isNpc ? 1 : 0,
       body_json: JSON.stringify(killmail)
     })
   );
