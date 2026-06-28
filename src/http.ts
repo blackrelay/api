@@ -25,12 +25,46 @@ function applyBaseHeaders(headers: Headers): Headers {
   return headers;
 }
 
-export function withCors(response: Response): Response {
+function requestOrigin(request?: Request): string {
+  const origin = request?.headers.get("Origin")?.trim();
+  if (!origin) {
+    return "*";
+  }
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+      return origin;
+    }
+  } catch {
+    // Fall back to public wildcard CORS for malformed Origin values.
+  }
+  return "*";
+}
+
+export function withCors(response: Response, request?: Request): Response {
+  const headers = applyBaseHeaders(new Headers(response.headers));
+  const origin = requestOrigin(request);
+  headers.set("Access-Control-Allow-Origin", origin);
+  if (origin !== "*") {
+    headers.set("Vary", mergeVary(headers.get("Vary"), "Origin"));
+  }
+
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
-    headers: applyBaseHeaders(new Headers(response.headers))
+    headers
   });
+}
+
+function mergeVary(current: string | null, value: string): string {
+  if (!current) {
+    return value;
+  }
+  const parts = current.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.some((part) => part.toLowerCase() === value.toLowerCase())) {
+    return current;
+  }
+  return `${current}, ${value}`;
 }
 
 export function jsonResponse(

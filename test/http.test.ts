@@ -36,4 +36,16 @@ describe("HTTP helpers", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.text()).resolves.toBe("blackrelay_api_entities 1\n");
   });
+
+  it("reflects valid browser origins on wrapped responses", () => {
+    const request = new Request("https://api.blackrelay.network/v1/metrics", {
+      headers: {
+        Origin: "https://blackrelay-registry-site.pages.dev"
+      }
+    });
+    const response = withCors(new Response("ok"), request);
+
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://blackrelay-registry-site.pages.dev");
+    expect(response.headers.get("Vary")).toBe("Origin");
+  });
 });

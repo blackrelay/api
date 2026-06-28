@@ -116,10 +116,10 @@ export default {
   async fetch(request, env, ctx): Promise<Response> {
     void ctx;
     try {
-      return withCors(withHead(request, await handleRequest(request, env)));
+      return withCors(withHead(request, await handleRequest(request, env)), request);
     } catch (error) {
       console.error(JSON.stringify({ level: "error", message: "unhandled request error", error: error instanceof Error ? error.message : String(error) }));
-      return withCors(errorResponse("internal_error", "Internal server error.", meta(env), 500));
+      return withCors(errorResponse("internal_error", "Internal server error.", meta(env), 500), request);
     }
   }
 } satisfies ExportedHandler<Env>;
