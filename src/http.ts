@@ -123,3 +123,14 @@ export function withHead(request: Request, response: Response): Response {
     headers: response.headers
   });
 }
+
+export function isPubliclyCacheable(response: Response): boolean {
+  if (response.status !== 200) {
+    return false;
+  }
+  if (response.headers.has("set-cookie")) {
+    return false;
+  }
+  const cacheControl = response.headers.get("cache-control")?.toLowerCase() ?? "";
+  return cacheControl.includes("public") && !cacheControl.includes("no-store") && !cacheControl.includes("private");
+}

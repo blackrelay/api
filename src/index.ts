@@ -1,6 +1,6 @@
 /// <reference path="../worker-configuration.d.ts" />
 
-import { emptyResponse, envelope, errorResponse, jsonResponse, withCors, withHead, type ApiMeta } from "./http";
+import { emptyResponse, envelope, errorResponse, isPubliclyCacheable, jsonResponse, withCors, withHead, type ApiMeta } from "./http";
 import { currentCollectionEntityTypes, currentCollections, parseCycleScope, parseLimit, typedCollectionEntityTypes } from "./query";
 import { ApiRepository } from "./repository";
 import { readExportObject, r2Response } from "./r2";
@@ -114,15 +114,30 @@ const documentedEndpoints = [
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
-    void ctx;
     try {
-      return withCors(withHead(request, await handleRequest(request, env)), request);
+      return withCors(withHead(request, await handleCachedRequest(request, env, ctx)), request);
     } catch (error) {
       console.error(JSON.stringify({ level: "error", message: "unhandled request error", error: error instanceof Error ? error.message : String(error) }));
       return withCors(errorResponse("internal_error", "Internal server error.", meta(env), 500), request);
     }
   }
 } satisfies ExportedHandler<Env>;
+
+async function handleCachedRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  if (request.method !== "GET") {
+    return handleRequest(request, env);
+  }
+  const cacheKey = new Request(request.url, { method: "GET" });
+  const cached = await caches.default.match(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const response = await handleRequest(request, env);
+  if (isPubliclyCacheable(response)) {
+    ctx.waitUntil(caches.default.put(cacheKey, response.clone()));
+  }
+  return response;
+}
 
 async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") {

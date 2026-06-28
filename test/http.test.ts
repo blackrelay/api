@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyResponse, jsonResponse, withCors } from "../src/http";
+import { emptyResponse, isPubliclyCacheable, jsonResponse, withCors } from "../src/http";
 
 describe("HTTP helpers", () => {
   it("adds public CORS headers to JSON responses", async () => {
@@ -47,5 +47,23 @@ describe("HTTP helpers", () => {
 
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://blackrelay-registry-site.pages.dev");
     expect(response.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("only marks public successful responses as cacheable", () => {
+    expect(isPubliclyCacheable(jsonResponse({ ok: true }))).toBe(true);
+    expect(isPubliclyCacheable(jsonResponse({ ok: true }, {}, "no-store"))).toBe(false);
+    expect(isPubliclyCacheable(jsonResponse({ ok: true }, { status: 404 }))).toBe(false);
+    expect(
+      isPubliclyCacheable(
+        jsonResponse(
+          { ok: true },
+          {
+            headers: {
+              "set-cookie": "session=example"
+            }
+          }
+        )
+      )
+    ).toBe(false);
   });
 });
