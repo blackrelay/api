@@ -15,7 +15,7 @@ import {
   type SourceGapRow,
   type SourceRow
 } from "./query";
-import { dedupeCurrentCharacters, dedupeCurrentTribes, needsTribeLabelRepair, repairCurrentTribeLabels } from "./current";
+import { dedupeCurrentTribes, needsTribeLabelRepair, repairCurrentTribeLabels } from "./current";
 import { collectKillmailEntityIDs, enrichKillmailRecords, type KillmailEntityLookup } from "./killmails";
 
 export type PageResult = {
@@ -168,10 +168,6 @@ export class ApiRepository {
 
   async listCurrent(collection: string, options: ListOptions): Promise<PageResult> {
     let page: PageResult;
-    if (collection === "characters") {
-      page = await this.listCurrentDeduped("characters", options, dedupeCurrentCharacters);
-      return this.repairCurrentPage(page, options);
-    }
     if (collection === "tribes") {
       page = await this.listCurrentDeduped("tribes", options, dedupeCurrentTribes);
       return this.repairCurrentPage(page, options);
@@ -409,9 +405,7 @@ export class ApiRepository {
         .prepare(
           `SELECT count(*) AS total FROM (
              SELECT DISTINCT
-               lower(coalesce(json_extract(body_json, '$.facts.character_address'), id))
-               || ':'
-               || lower(coalesce(json_extract(body_json, '$.entity.displayName'), json_extract(body_json, '$.entity.name'), id)) AS identity_key
+               id AS identity_key
              FROM api_current
              WHERE collection = 'characters'
                AND (
