@@ -127,6 +127,25 @@ export const currentCollectionEntityTypes: Record<string, string> = {
   routes: "route"
 };
 
+export const currentEntityFallbackCollections = new Set([
+  "tribes",
+  "assemblies",
+  "gates",
+  "storage",
+  "turrets",
+  "regions",
+  "constellations",
+  "items",
+  "materials",
+  "enemies",
+  "recipes",
+  "blueprints",
+  "ships",
+  "structures",
+  "systems",
+  "routes"
+]);
+
 export function parseLimit(value: string | null, defaultLimit = 50, maxLimit = 200): number {
   if (!value) {
     return defaultLimit;

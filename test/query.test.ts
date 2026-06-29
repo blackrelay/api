@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCycleWhere,
   currentCollections,
+  currentEntityFallbackCollections,
   decodeCursor,
   encodeCursor,
   parseCycleScope,
@@ -98,5 +99,11 @@ describe("query helpers", () => {
     ]) {
       expect(currentCollections.has(collection)).toBe(true);
     }
+  });
+
+  it("does not allow canonical entity fallback for current characters", () => {
+    expect(currentEntityFallbackCollections.has("characters")).toBe(false);
+    expect(currentEntityFallbackCollections.has("materials")).toBe(true);
+    expect(currentEntityFallbackCollections.has("systems")).toBe(true);
   });
 });

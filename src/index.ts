@@ -1,7 +1,14 @@
 /// <reference path="../worker-configuration.d.ts" />
 
 import { emptyResponse, envelope, errorResponse, isPubliclyCacheable, jsonResponse, rateLimitedResponse, withCors, withHead, type ApiMeta } from "./http";
-import { currentCollectionEntityTypes, currentCollections, parseCycleScope, parseLimit, typedCollectionEntityTypes } from "./query";
+import {
+  currentCollectionEntityTypes,
+  currentCollections,
+  currentEntityFallbackCollections,
+  parseCycleScope,
+  parseLimit,
+  typedCollectionEntityTypes
+} from "./query";
 import { ApiRepository } from "./repository";
 import { readExportObject, r2Response } from "./r2";
 
@@ -323,7 +330,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (parts[1] === "current" && parts.length === 3 && currentCollections.has(parts[2] ?? "")) {
     const collection = parts[2] ?? "";
     const page = await repository.listCurrent(collection, listOptions(url, env));
-    if (page.data.length === 0 && currentCollectionEntityTypes[collection]) {
+    if (page.data.length === 0 && currentCollectionEntityTypes[collection] && currentEntityFallbackCollections.has(collection)) {
       const fallback = await repository.listEntities({ ...listOptions(url, env), entityType: currentCollectionEntityTypes[collection] });
       return jsonResponse(envelope(fallback.data, apiMeta, fallback.nextCursor));
     }
