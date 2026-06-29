@@ -249,6 +249,73 @@ describe("export-to-sql", () => {
     expect(sql).toContain("Cycle 6 Pilot");
   });
 
+  it("does not import stale placeholder tribes into current-state tables", () => {
+    const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
+    const exportDir = join(root, "export");
+    const chunkDir = join(root, "chunks");
+    mkdirSync(exportDir, { recursive: true });
+
+    writeFileSync(join(exportDir, "catalog.json"), JSON.stringify({ schemaVersion: "registry.export.v1" }));
+    writeFileSync(join(exportDir, "manifest.json"), JSON.stringify({ schemaVersion: "registry.export_manifest.v1" }));
+    writeFileSync(join(exportDir, "entities.jsonl"), "");
+    writeFileSync(
+      join(exportDir, "current_entities.jsonl"),
+      [
+        {
+          entity: {
+            id: "tribe:stillness:98000422",
+            slug: "tribe-98000422-stillness",
+            name: "Tribe 98000422",
+            displayName: "Tribe 98000422",
+            entityType: "tribe",
+            environment: "stillness",
+            cycle: 6
+          },
+          facts: {
+            tribe_id: "98000422",
+            source_event_kind: "character.created"
+          }
+        },
+        {
+          entity: {
+            id: "tribe:stillness:1000167",
+            slug: "tribe-1000167-stillness",
+            name: "Clonebank 86",
+            displayName: "Clonebank 86",
+            entityType: "tribe",
+            environment: "stillness",
+            cycle: 6
+          },
+          facts: {
+            tribe_id: "1000167",
+            tag: "CO86"
+          }
+        }
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n") + "\n"
+    );
+
+    execFileSync(
+      process.execPath,
+      [
+        join(process.cwd(), "scripts", "export-to-sql.mjs"),
+        "--export-dir",
+        exportDir,
+        "--chunk-dir",
+        chunkDir,
+        "--no-transactions"
+      ],
+      { cwd: process.cwd(), stdio: "pipe" }
+    );
+
+    const sql = readFileSync(join(chunkDir, "0000.sql"), "utf8");
+    expect(sql).not.toContain("tribe:stillness:98000422");
+    expect(sql).not.toContain("Tribe 98000422");
+    expect(sql).toContain("tribe:stillness:1000167");
+    expect(sql).toContain("Clonebank 86");
+  });
+
   it("does not mirror canonical entities into current-state tables", () => {
     const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
     const exportDir = join(root, "export");

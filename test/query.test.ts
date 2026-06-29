@@ -101,8 +101,9 @@ describe("query helpers", () => {
     }
   });
 
-  it("does not allow canonical entity fallback for current characters", () => {
+  it("does not allow canonical entity fallback for current identities", () => {
     expect(currentEntityFallbackCollections.has("characters")).toBe(false);
+    expect(currentEntityFallbackCollections.has("tribes")).toBe(false);
     expect(currentEntityFallbackCollections.has("materials")).toBe(true);
     expect(currentEntityFallbackCollections.has("systems")).toBe(true);
   });

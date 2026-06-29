@@ -128,7 +128,6 @@ export const currentCollectionEntityTypes: Record<string, string> = {
 };
 
 export const currentEntityFallbackCollections = new Set([
-  "tribes",
   "assemblies",
   "gates",
   "storage",

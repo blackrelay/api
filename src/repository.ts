@@ -414,7 +414,6 @@ export class ApiRepository {
                || lower(coalesce(json_extract(body_json, '$.entity.displayName'), json_extract(body_json, '$.entity.name'), id)) AS identity_key
              FROM api_current
              WHERE collection = 'characters'
-               AND json_extract(body_json, '$.derived.profile') IS NOT NULL
                AND (
                  json_extract(body_json, '$.facts.source_event_kind') IS NOT NULL
                  OR json_extract(body_json, '$.facts.source_event_id') IS NOT NULL

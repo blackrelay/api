@@ -202,6 +202,9 @@ await readOptionalJSONL(join(exportDir, "current_entities.jsonl"), (row) => {
   if (collection === "characters" && !hasCurrentCycleCharacterEvidence(current)) {
     return;
   }
+  if (collection === "tribes" && !hasPublicCurrentTribeProfile(current)) {
+    return;
+  }
   const search = currentSearchText(current, entity);
   statements.push(
     insertOrReplace("api_current", {
@@ -608,6 +611,41 @@ function hasCurrentCycleCharacterEvidence(current) {
     stringValue(facts.source_event_id) ||
     stringValue(facts.transaction_digest)
   );
+}
+
+function hasPublicCurrentTribeProfile(current) {
+  const entity = current?.entity ?? current;
+  if (entity?.entityType !== "tribe") {
+    return true;
+  }
+  const tribeID = String(current?.facts?.tribe_id ?? entityToken(String(entity.id ?? ""))).trim();
+  const displayName = String(entity.displayName ?? entity.name ?? "").trim();
+  if (!displayName || isPlaceholderDisplay("tribe", displayName) || isPlaceholderTribeDisplay(displayName, tribeID)) {
+    return false;
+  }
+  if (displayName.toLowerCase().startsWith("npc corp ")) {
+    return false;
+  }
+  return isCycle6PublicTribeID(tribeID);
+}
+
+function isPlaceholderTribeDisplay(value, tribeID) {
+  const text = String(value ?? "").trim();
+  if (!text || !tribeID) {
+    return !text;
+  }
+  return text.toLowerCase() === `tribe ${tribeID}`.toLowerCase();
+}
+
+function isCycle6PublicTribeID(tribeID) {
+  const text = String(tribeID ?? "").trim();
+  if (text === "1000167") {
+    return true;
+  }
+  if (!/^\d+$/.test(text)) {
+    return false;
+  }
+  return Number.parseInt(text, 10) >= 98000535;
 }
 
 function stringValue(value) {
