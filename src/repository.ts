@@ -236,6 +236,13 @@ export class ApiRepository {
     let sql = `SELECT id, body_json, sort_key
       FROM api_current
       WHERE collection = ? AND environment = ?${cycle.sql}`;
+    if (collection === "characters") {
+      sql += ` AND (
+        json_extract(body_json, '$.facts.source_event_kind') IS NOT NULL
+        OR json_extract(body_json, '$.facts.source_event_id') IS NOT NULL
+        OR json_extract(body_json, '$.facts.transaction_digest') IS NOT NULL
+      )`;
+    }
     const needle = likeNeedle(options.q);
     if (needle) {
       sql += " AND search_text LIKE ?";
@@ -408,6 +415,11 @@ export class ApiRepository {
              FROM api_current
              WHERE collection = 'characters'
                AND json_extract(body_json, '$.derived.profile') IS NOT NULL
+               AND (
+                 json_extract(body_json, '$.facts.source_event_kind') IS NOT NULL
+                 OR json_extract(body_json, '$.facts.source_event_id') IS NOT NULL
+                 OR json_extract(body_json, '$.facts.transaction_digest') IS NOT NULL
+               )
            )`
         )
         .first<{ total: number }>(),

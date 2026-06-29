@@ -69,6 +69,13 @@ export function dedupeCurrentCharacters(rows: unknown[]): unknown[] {
   return out;
 }
 
+export function hasCurrentCycleCharacterEvidence(row: unknown): boolean {
+  if (!isCurrentEntityRow(row) || row.entity?.entityType !== "character") {
+    return true;
+  }
+  return Boolean(stringFact(row, "source_event_kind") || stringFact(row, "source_event_id") || stringFact(row, "transaction_digest"));
+}
+
 export function dedupeCurrentTribes(rows: unknown[]): unknown[] {
   const out: CurrentEntityRow[] = [];
   const byIdentity = new Map<string, number>();

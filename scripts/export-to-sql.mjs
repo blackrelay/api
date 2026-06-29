@@ -199,6 +199,9 @@ await readOptionalJSONL(join(exportDir, "current_entities.jsonl"), (row) => {
   if (!collection) {
     return;
   }
+  if (collection === "characters" && !hasCurrentCycleCharacterEvidence(current)) {
+    return;
+  }
   const search = currentSearchText(current, entity);
   statements.push(
     insertOrReplace("api_current", {
@@ -596,6 +599,19 @@ function enrichCurrent(current) {
     }
   }
   return enriched;
+}
+
+function hasCurrentCycleCharacterEvidence(current) {
+  const facts = current?.facts ?? {};
+  return Boolean(
+    stringValue(facts.source_event_kind) ||
+    stringValue(facts.source_event_id) ||
+    stringValue(facts.transaction_digest)
+  );
+}
+
+function stringValue(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function resolveDisplayName(id, entityType, currentDisplay) {

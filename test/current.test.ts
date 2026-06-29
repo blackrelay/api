@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { dedupeCurrentCharacters, dedupeCurrentTribes, needsTribeLabelRepair, repairCurrentTribeLabels } from "../src/current";
+import {
+  dedupeCurrentCharacters,
+  dedupeCurrentTribes,
+  hasCurrentCycleCharacterEvidence,
+  needsTribeLabelRepair,
+  repairCurrentTribeLabels
+} from "../src/current";
 
 describe("current entity normalisation", () => {
   it("collapses duplicate character identities and keeps relations for the winning row", () => {
@@ -60,6 +66,29 @@ describe("current entity normalisation", () => {
     expect(deduped[0].facts.object_id).toBe("0xlegacy");
     expect(deduped[0].sourceIds).toEqual(["source:sui:sui-testnet:graphql", "source:sui:sui-testnet:graphql:objects"]);
     expect(deduped[0].outgoingRelations.map((relation) => relation.subjectEntityId)).toEqual(["character:stillness:2112092610"]);
+  });
+
+  it("recognises event-backed current characters and rejects object-only rows", () => {
+    expect(
+      hasCurrentCycleCharacterEvidence({
+        entity: { entityType: "character" },
+        facts: {
+          character_address: "0xf09dfb4627f9144213d3c9a0390933b5febbe2f2bc959404d309d0538ea4fec4",
+          metadata_name: "Cassius",
+          package_id: "0x28b497559d65ab320d9da4613bf2498d5946b2c0ae3597ccfda3072ce127448c"
+        }
+      })
+    ).toBe(false);
+
+    expect(
+      hasCurrentCycleCharacterEvidence({
+        entity: { entityType: "character" },
+        facts: {
+          character_address: "0xf09dfb4627f9144213d3c9a0390933b5febbe2f2bc959404d309d0538ea4fec4",
+          source_event_kind: "character.created"
+        }
+      })
+    ).toBe(true);
   });
 
   it("collapses duplicate tribe identities and prefers named public profile rows", () => {

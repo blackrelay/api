@@ -68,6 +68,7 @@ describe("export-to-sql", () => {
           cycle: 6
         },
         facts: {
+          source_event_kind: "character.created",
           system_id: "30000192",
           region_name: "Known Region"
         },
@@ -135,6 +136,7 @@ describe("export-to-sql", () => {
         },
         facts: {
           character_address: "0xabc",
+          source_event_kind: "character.created",
           tribe_id: 1000167
         },
         derived: {
@@ -175,6 +177,76 @@ describe("export-to-sql", () => {
     const sql = readFileSync(join(chunkDir, "0000.sql"), "utf8");
     expect(sql).toContain("Clonebank 86");
     expect(sql).not.toContain("Tribe 1000167");
+  });
+
+  it("does not import object-only legacy characters into current-state tables", () => {
+    const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
+    const exportDir = join(root, "export");
+    const chunkDir = join(root, "chunks");
+    mkdirSync(exportDir, { recursive: true });
+
+    writeFileSync(join(exportDir, "catalog.json"), JSON.stringify({ schemaVersion: "registry.export.v1" }));
+    writeFileSync(join(exportDir, "manifest.json"), JSON.stringify({ schemaVersion: "registry.export_manifest.v1" }));
+    writeFileSync(join(exportDir, "entities.jsonl"), "");
+    writeFileSync(
+      join(exportDir, "current_entities.jsonl"),
+      [
+        {
+          entity: {
+            id: "character:stillness:2112077591",
+            slug: "character-2112077591-stillness",
+            name: "Cassius",
+            displayName: "Cassius",
+            entityType: "character",
+            environment: "stillness",
+            cycle: 6
+          },
+          facts: {
+            character_address: "0xf09dfb4627f9144213d3c9a0390933b5febbe2f2bc959404d309d0538ea4fec4",
+            metadata_name: "Cassius",
+            package_id: "0x28b497559d65ab320d9da4613bf2498d5946b2c0ae3597ccfda3072ce127448c"
+          }
+        },
+        {
+          entity: {
+            id: "character:stillness:2112099999",
+            slug: "character-2112099999-stillness",
+            name: "Cycle 6 Pilot",
+            displayName: "Cycle 6 Pilot",
+            entityType: "character",
+            environment: "stillness",
+            cycle: 6
+          },
+          facts: {
+            character_address: "0x123",
+            metadata_name: "Cycle 6 Pilot",
+            source_event_kind: "character.created",
+            source_event_id: "event:character-created"
+          }
+        }
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n") + "\n"
+    );
+
+    execFileSync(
+      process.execPath,
+      [
+        join(process.cwd(), "scripts", "export-to-sql.mjs"),
+        "--export-dir",
+        exportDir,
+        "--chunk-dir",
+        chunkDir,
+        "--no-transactions"
+      ],
+      { cwd: process.cwd(), stdio: "pipe" }
+    );
+
+    const sql = readFileSync(join(chunkDir, "0000.sql"), "utf8");
+    expect(sql).not.toContain("character:stillness:2112077591");
+    expect(sql).not.toContain("Cassius");
+    expect(sql).toContain("character:stillness:2112099999");
+    expect(sql).toContain("Cycle 6 Pilot");
   });
 
   it("does not mirror canonical entities into current-state tables", () => {
