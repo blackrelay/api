@@ -1,6 +1,6 @@
 /// <reference path="../worker-configuration.d.ts" />
 
-import { emptyResponse, envelope, errorResponse, isPubliclyCacheable, jsonResponse, withCors, withHead, type ApiMeta } from "./http";
+import { emptyResponse, envelope, errorResponse, isPubliclyCacheable, jsonResponse, rateLimitedResponse, withCors, withHead, type ApiMeta } from "./http";
 import { currentCollectionEntityTypes, currentCollections, parseCycleScope, parseLimit, typedCollectionEntityTypes } from "./query";
 import { ApiRepository } from "./repository";
 import { readExportObject, r2Response } from "./r2";
@@ -125,6 +125,10 @@ export default {
 
 async function handleCachedRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (request.method !== "GET") {
+    const limited = await rateLimitRequest(request, env);
+    if (limited) {
+      return limited;
+    }
     return handleRequest(request, env);
   }
   const cacheKey = new Request(request.url, { method: "GET" });
@@ -132,11 +136,62 @@ async function handleCachedRequest(request: Request, env: Env, ctx: ExecutionCon
   if (cached) {
     return cached;
   }
+  const limited = await rateLimitRequest(request, env);
+  if (limited) {
+    return limited;
+  }
   const response = await handleRequest(request, env);
   if (isPubliclyCacheable(response)) {
     ctx.waitUntil(caches.default.put(cacheKey, response.clone()));
   }
   return response;
+}
+
+async function rateLimitRequest(request: Request, env: Env): Promise<Response | undefined> {
+  if (request.method === "OPTIONS") {
+    return undefined;
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return undefined;
+  }
+
+  const url = new URL(request.url);
+  const className = rateLimitClass(url.pathname);
+  const key = rateLimitKey(request, className);
+  const limiter = rateLimitBinding(env, className);
+  const outcome = await limiter.limit({ key });
+  if (outcome.success) {
+    return undefined;
+  }
+  return rateLimitedResponse(meta(env), 60);
+}
+
+type RateLimitClass = "general" | "ops" | "exports";
+
+function rateLimitClass(pathname: string): RateLimitClass {
+  const path = trimPath(pathname);
+  if (path === "metrics" || path === "v1/metrics" || path.startsWith("v1/ops/")) {
+    return "ops";
+  }
+  if (path.startsWith("v1/exports/")) {
+    return "exports";
+  }
+  return "general";
+}
+
+function rateLimitBinding(env: Env, className: RateLimitClass): RateLimit {
+  if (className === "ops") {
+    return env.OPS_RATE_LIMIT;
+  }
+  if (className === "exports") {
+    return env.EXPORT_RATE_LIMIT;
+  }
+  return env.GENERAL_RATE_LIMIT;
+}
+
+function rateLimitKey(request: Request, className: RateLimitClass): string {
+  const client = request.headers.get("CF-Connecting-IP")?.trim() || "unknown";
+  return `blackrelay-api:${className}:${client}`;
 }
 
 async function handleRequest(request: Request, env: Env): Promise<Response> {

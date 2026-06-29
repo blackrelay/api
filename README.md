@@ -197,6 +197,18 @@ GET /v1/exports/{file}
 
 The route surface is intentionally read-only.
 
+## Request Limits
+
+The Worker applies Cloudflare Rate Limit bindings after checking the default Worker cache. Cache hits are served without spending the route budget. Uncached `GET` and `HEAD` requests are grouped by route class and client IP:
+
+Route class | Paths | Limit
+:--- | :--- | :---
+General API | `/v1/*` except the routes below | 300 requests per minute
+Operations | `/metrics`, `/v1/metrics`, `/v1/ops/*` | 60 requests per minute
+Exports | `/v1/exports/*` | 30 requests per minute
+
+Limited responses use HTTP `429` with `Retry-After: 60` and a structured `rate_limited` error body. Bulk clients should prefer cached export files and honour `Retry-After`.
+
 ## Cloudflare Resources
 
 Create these before deployment:

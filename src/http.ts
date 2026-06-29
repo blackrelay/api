@@ -8,7 +8,8 @@ export type ErrorCode =
   | "not_found"
   | "method_not_allowed"
   | "internal_error"
-  | "not_ready";
+  | "not_ready"
+  | "rate_limited";
 
 const baseHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -101,6 +102,25 @@ export function errorResponse(code: ErrorCode, message: string, meta: ApiMeta, s
       meta
     },
     { status },
+    "no-store"
+  );
+}
+
+export function rateLimitedResponse(meta: ApiMeta, retryAfterSeconds: number): Response {
+  return jsonResponse(
+    {
+      error: {
+        code: "rate_limited",
+        message: "Too many requests. Retry after the indicated delay."
+      },
+      meta
+    },
+    {
+      status: 429,
+      headers: {
+        "Retry-After": String(retryAfterSeconds)
+      }
+    },
     "no-store"
   );
 }

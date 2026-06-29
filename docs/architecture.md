@@ -15,6 +15,8 @@ Cloudflare
 
 The API Worker treats D1 rows as a disposable query index. R2 keeps the export artefacts that explain which Registry snapshot produced the public data.
 
+The Worker applies Cloudflare Rate Limit bindings to uncached public reads. These limits protect Worker, D1 and R2 budgets; they do not define data ownership and they do not make the API private.
+
 ## Data Ownership
 
 The Registry owns canonical data and provenance. The API repo owns:
@@ -22,6 +24,7 @@ The Registry owns canonical data and provenance. The API repo owns:
 - D1 read indexes
 - R2 export delivery
 - public cache headers
+- public request limits
 - deployment configuration
 
 It does not own source normalisation, Sui indexing, World API fetching, static-client decoding or manual review.
