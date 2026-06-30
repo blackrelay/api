@@ -249,7 +249,7 @@ describe("export-to-sql", () => {
     expect(sql).toContain("Cycle 6 Pilot");
   });
 
-  it("imports only characters with Cycle 6 character-created events when events are exported", () => {
+  it("imports current characters with accepted Cycle 6 event evidence", () => {
     const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
     const exportDir = join(root, "export");
     const chunkDir = join(root, "chunks");
@@ -270,6 +270,20 @@ describe("export-to-sql", () => {
           json: {
             key: {
               item_id: "2112099999"
+            }
+          }
+        }
+      })}\n${JSON.stringify({
+        id: "event:inventory:0",
+        kind: "inventory.item.deposited",
+        environment: "stillness",
+        cycle: 6,
+        occurredAt: "2026-06-29T00:00:30.000Z",
+        payload: {
+          json: {
+            key: {
+              tenant: "stillness",
+              item_id: "2112097777"
             }
           }
         }
@@ -305,6 +319,21 @@ describe("export-to-sql", () => {
           facts: {
             source_event_kind: "killmail.created",
             source_event_id: "event:latest-killmail"
+          }
+        },
+        {
+          entity: {
+            id: "character:stillness:2112097777",
+            slug: "character-2112097777-stillness",
+            name: "Inventory Pilot",
+            displayName: "Inventory Pilot",
+            entityType: "character",
+            environment: "stillness",
+            cycle: 6
+          },
+          facts: {
+            source_event_kind: "inventory.item.deposited",
+            source_event_id: "event:inventory:0"
           }
         },
         {
@@ -358,6 +387,8 @@ describe("export-to-sql", () => {
     const sql = readFileSync(join(chunkDir, "0000.sql"), "utf8");
     expect(sql).toContain("character:stillness:2112099999");
     expect(sql).toContain("Created Pilot");
+    expect(sql).toContain("character:stillness:2112097777");
+    expect(sql).toContain("Inventory Pilot");
     expect(sql).not.toContain("event:mismatched-tenant:0");
     expect(sql).not.toContain("character:stillness:2112000001");
     expect(sql).not.toContain("Cross Tenant Pilot");

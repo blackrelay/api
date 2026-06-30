@@ -14,6 +14,7 @@ const sortSeparator = " | ";
 const maxD1BodyJSONBytes = 30_000;
 const entityDisplayByID = new Map();
 const tribeDisplayByToken = new Map();
+const acceptedCycle6EventIDs = new Set();
 const cycle6CreatedCharacterIDs = new Set();
 const currentCharacterTribeIDs = new Map();
 const removedPublicSourceIDs = new Set(["source:tribe-identities:stillness", "source:datahub:types:stillness"]);
@@ -104,6 +105,7 @@ await readOptionalJSONL(join(exportDir, "events.jsonl"), (row) => {
   if (!primaryPayloadTenantMatchesEnvironment(event.payload, event.environment)) {
     return;
   }
+  registerAcceptedEvent(event);
   registerCreatedCharacter(event);
   statements.push(
     insert("api_events", {
@@ -199,7 +201,7 @@ await readOptionalJSONL(join(exportDir, "source_artefacts.jsonl"), (row) => {
 });
 
 await readOptionalJSONL(join(exportDir, "current_entities.jsonl"), (row) => {
-  recordCurrentCharacterTribe(parseRow(row), cycle6CreatedCharacterIDs, currentCharacterTribeIDs);
+  recordCurrentCharacterTribe(parseRow(row), cycle6CreatedCharacterIDs, currentCharacterTribeIDs, acceptedCycle6EventIDs);
 });
 
 await readOptionalJSONL(join(exportDir, "current_entities.jsonl"), (row) => {
@@ -209,7 +211,7 @@ await readOptionalJSONL(join(exportDir, "current_entities.jsonl"), (row) => {
   if (!collection) {
     return;
   }
-  if (collection === "characters" && !hasCurrentCycleCharacterEvidence(current, cycle6CreatedCharacterIDs)) {
+  if (collection === "characters" && !hasCurrentCycleCharacterEvidence(current, cycle6CreatedCharacterIDs, acceptedCycle6EventIDs)) {
     return;
   }
   if (collection === "tribes" && !hasPublicCurrentTribeProfile(current)) {
@@ -611,17 +613,17 @@ function enrichCurrent(current, createdCharacterIDs = new Set(), currentCharacte
       }
     }
   }
-  filterCurrentTribeMemberRelations(enriched, createdCharacterIDs, currentCharacterTribeIDs);
+  filterCurrentTribeMemberRelations(enriched, currentCharacterTribeIDs);
   return enriched;
 }
 
-function recordCurrentCharacterTribe(current, createdCharacterIDs = new Set(), currentCharacterTribeIDs = new Map()) {
+function recordCurrentCharacterTribe(current, createdCharacterIDs = new Set(), currentCharacterTribeIDs = new Map(), acceptedEventIDs = new Set()) {
   const entity = current?.entity ?? current;
   if (entity?.entityType !== "character") {
     return;
   }
   const entityID = String(entity.id ?? "");
-  if (createdCharacterIDs.size > 0 && !createdCharacterIDs.has(entityID)) {
+  if (!hasCurrentCycleCharacterEvidence(current, createdCharacterIDs, acceptedEventIDs)) {
     return;
   }
   const tribeID = String(current?.derived?.tribe?.entityId ?? "").trim();
@@ -631,9 +633,9 @@ function recordCurrentCharacterTribe(current, createdCharacterIDs = new Set(), c
   currentCharacterTribeIDs.set(entityID, tribeID);
 }
 
-function filterCurrentTribeMemberRelations(current, createdCharacterIDs = new Set(), currentCharacterTribeIDs = new Map()) {
+function filterCurrentTribeMemberRelations(current, currentCharacterTribeIDs = new Map()) {
   const entity = current?.entity ?? current;
-  if (entity?.entityType !== "tribe" || createdCharacterIDs.size === 0 || !Array.isArray(current.incomingRelations)) {
+  if (entity?.entityType !== "tribe" || !Array.isArray(current.incomingRelations)) {
     return;
   }
   let memberCount = 0;
@@ -643,7 +645,7 @@ function filterCurrentTribeMemberRelations(current, createdCharacterIDs = new Se
       return true;
     }
     const subjectID = String(relation.subjectEntityId ?? "");
-    if (!createdCharacterIDs.has(subjectID) || seenMemberIDs.has(subjectID)) {
+    if (!currentCharacterTribeIDs.has(subjectID) || seenMemberIDs.has(subjectID)) {
       return false;
     }
     if (currentCharacterTribeIDs.get(subjectID) !== String(entity.id ?? "")) {
@@ -658,17 +660,29 @@ function filterCurrentTribeMemberRelations(current, createdCharacterIDs = new Se
   }
 }
 
-function hasCurrentCycleCharacterEvidence(current, createdCharacterIDs = new Set()) {
+function hasCurrentCycleCharacterEvidence(current, createdCharacterIDs = new Set(), acceptedEventIDs = new Set()) {
   const entity = current?.entity ?? current;
-  if (createdCharacterIDs.size > 0) {
-    return createdCharacterIDs.has(String(entity?.id ?? ""));
+  if (createdCharacterIDs.has(String(entity?.id ?? ""))) {
+    return true;
   }
   const facts = current?.facts ?? {};
+  const sourceEventID = stringValue(facts.source_event_id);
+  if (sourceEventID && acceptedEventIDs.size > 0 && !acceptedEventIDs.has(sourceEventID)) {
+    return false;
+  }
   return Boolean(
     stringValue(facts.source_event_kind) ||
-    stringValue(facts.source_event_id) ||
+    sourceEventID ||
     stringValue(facts.transaction_digest)
   );
+}
+
+function registerAcceptedEvent(event) {
+  const cycle = Number(event?.cycle ?? cycleForTimestamp(event?.occurredAt));
+  const id = stringValue(event?.id);
+  if (cycle === 6 && id) {
+    acceptedCycle6EventIDs.add(id);
+  }
 }
 
 function registerCreatedCharacter(event) {
