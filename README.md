@@ -199,7 +199,7 @@ The route surface is intentionally read-only.
 
 ## Request Limits
 
-The Worker applies Cloudflare Rate Limit bindings after checking the default Worker cache. Cache hits are served without spending the route budget. Uncached `GET` and `HEAD` requests are grouped by route class and client IP:
+The Worker applies Cloudflare Rate Limit bindings to uncached `GET` and `HEAD` requests. D1-backed API routes use `Cache-Control: no-store` so current rows can propagate as soon as the read model is updated. Static export routes remain cacheable and cache hits are served without spending the route budget.
 
 Route class | Paths | Limit
 :--- | :--- | :---

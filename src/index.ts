@@ -138,20 +138,41 @@ async function handleCachedRequest(request: Request, env: Env, ctx: ExecutionCon
     }
     return handleRequest(request, env);
   }
+  const bypassDefaultCache = shouldBypassDefaultCache(new URL(request.url).pathname);
   const cacheKey = new Request(request.url, { method: "GET" });
-  const cached = await caches.default.match(cacheKey);
-  if (cached) {
-    return cached;
+  if (!bypassDefaultCache) {
+    const cached = await caches.default.match(cacheKey);
+    if (cached) {
+      return cached;
+    }
   }
   const limited = await rateLimitRequest(request, env);
   if (limited) {
     return limited;
   }
-  const response = await handleRequest(request, env);
-  if (isPubliclyCacheable(response)) {
+  const response = bypassDefaultCache ? withCacheControl(await handleRequest(request, env), "no-store") : await handleRequest(request, env);
+  if (!bypassDefaultCache && isPubliclyCacheable(response)) {
     ctx.waitUntil(caches.default.put(cacheKey, response.clone()));
   }
   return response;
+}
+
+function shouldBypassDefaultCache(pathname: string): boolean {
+  const path = trimPath(pathname);
+  if (path === "" || path === "v1" || path.startsWith("v1/exports/")) {
+    return false;
+  }
+  return path === "metrics" || path.startsWith("v1/");
+}
+
+function withCacheControl(response: Response, cacheControl: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", cacheControl);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
 }
 
 async function rateLimitRequest(request: Request, env: Env): Promise<Response | undefined> {
