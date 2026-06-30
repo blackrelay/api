@@ -14,6 +14,8 @@ const sortSeparator = " | ";
 const maxD1BodyJSONBytes = 30_000;
 const entityDisplayByID = new Map();
 const tribeDisplayByToken = new Map();
+const cycle6CreatedCharacterIDs = new Set();
+const currentCharacterTribeIDs = new Map();
 const removedPublicSourceIDs = new Set(["source:tribe-identities:stillness", "source:datahub:types:stillness"]);
 
 if (!exportDir || (!out && !chunkDir)) {
@@ -99,6 +101,10 @@ await readOptionalJSONL(join(exportDir, "sources.jsonl"), (row) => {
 
 await readOptionalJSONL(join(exportDir, "events.jsonl"), (row) => {
   const event = parseRow(row);
+  if (!primaryPayloadTenantMatchesEnvironment(event.payload, event.environment)) {
+    return;
+  }
+  registerCreatedCharacter(event);
   statements.push(
     insert("api_events", {
       id: event.id,
@@ -193,13 +199,17 @@ await readOptionalJSONL(join(exportDir, "source_artefacts.jsonl"), (row) => {
 });
 
 await readOptionalJSONL(join(exportDir, "current_entities.jsonl"), (row) => {
-  const current = enrichCurrent(parseRow(row));
+  recordCurrentCharacterTribe(parseRow(row), cycle6CreatedCharacterIDs, currentCharacterTribeIDs);
+});
+
+await readOptionalJSONL(join(exportDir, "current_entities.jsonl"), (row) => {
+  const current = enrichCurrent(parseRow(row), cycle6CreatedCharacterIDs, currentCharacterTribeIDs);
   const entity = current.entity ?? current;
   const collection = collectionForEntityType(entity.entityType);
   if (!collection) {
     return;
   }
-  if (collection === "characters" && !hasCurrentCycleCharacterEvidence(current)) {
+  if (collection === "characters" && !hasCurrentCycleCharacterEvidence(current, cycle6CreatedCharacterIDs)) {
     return;
   }
   if (collection === "tribes" && !hasPublicCurrentTribeProfile(current)) {
@@ -559,7 +569,7 @@ function registerEntityDisplay(entity) {
   }
 }
 
-function enrichCurrent(current) {
+function enrichCurrent(current, createdCharacterIDs = new Set(), currentCharacterTribeIDs = new Map()) {
   const enriched = JSON.parse(JSON.stringify(current));
   const enrichedEntity = enriched.entity ?? enriched;
   const entityType = String(enrichedEntity.entityType ?? "");
@@ -601,16 +611,116 @@ function enrichCurrent(current) {
       }
     }
   }
+  filterCurrentTribeMemberRelations(enriched, createdCharacterIDs, currentCharacterTribeIDs);
   return enriched;
 }
 
-function hasCurrentCycleCharacterEvidence(current) {
+function recordCurrentCharacterTribe(current, createdCharacterIDs = new Set(), currentCharacterTribeIDs = new Map()) {
+  const entity = current?.entity ?? current;
+  if (entity?.entityType !== "character") {
+    return;
+  }
+  const entityID = String(entity.id ?? "");
+  if (createdCharacterIDs.size > 0 && !createdCharacterIDs.has(entityID)) {
+    return;
+  }
+  const tribeID = String(current?.derived?.tribe?.entityId ?? "").trim();
+  if (!entityID || !tribeID) {
+    return;
+  }
+  currentCharacterTribeIDs.set(entityID, tribeID);
+}
+
+function filterCurrentTribeMemberRelations(current, createdCharacterIDs = new Set(), currentCharacterTribeIDs = new Map()) {
+  const entity = current?.entity ?? current;
+  if (entity?.entityType !== "tribe" || createdCharacterIDs.size === 0 || !Array.isArray(current.incomingRelations)) {
+    return;
+  }
+  let memberCount = 0;
+  const seenMemberIDs = new Set();
+  current.incomingRelations = current.incomingRelations.filter((relation) => {
+    if (relation?.predicate !== "belongs_to" || relation?.subjectEntityType !== "character") {
+      return true;
+    }
+    const subjectID = String(relation.subjectEntityId ?? "");
+    if (!createdCharacterIDs.has(subjectID) || seenMemberIDs.has(subjectID)) {
+      return false;
+    }
+    if (currentCharacterTribeIDs.get(subjectID) !== String(entity.id ?? "")) {
+      return false;
+    }
+    seenMemberIDs.add(subjectID);
+    memberCount += 1;
+    return true;
+  });
+  if (current.derived && typeof current.derived === "object") {
+    current.derived.memberCount = memberCount;
+  }
+}
+
+function hasCurrentCycleCharacterEvidence(current, createdCharacterIDs = new Set()) {
+  const entity = current?.entity ?? current;
+  if (createdCharacterIDs.size > 0) {
+    return createdCharacterIDs.has(String(entity?.id ?? ""));
+  }
   const facts = current?.facts ?? {};
   return Boolean(
     stringValue(facts.source_event_kind) ||
     stringValue(facts.source_event_id) ||
     stringValue(facts.transaction_digest)
   );
+}
+
+function registerCreatedCharacter(event) {
+  if (event?.kind !== "character.created" || Number(event?.cycle) !== 6) {
+    return;
+  }
+  const environment = String(event.environment ?? "").trim();
+  const itemID = String(
+    event.payload?.json?.key?.item_id ??
+      event.payload?.key?.item_id ??
+      event.payload?.json?.item_id ??
+      event.payload?.item_id ??
+      ""
+  ).trim();
+  if (!environment || !itemID) {
+    return;
+  }
+  cycle6CreatedCharacterIDs.add(`character:${environment}:${itemID}`);
+}
+
+function primaryPayloadTenantMatchesEnvironment(payload, environment) {
+  const expected = String(environment ?? "").trim();
+  if (!expected || expected === "unknown") {
+    return true;
+  }
+  const key = firstTenantKey(payload, [
+    "key",
+    "assembly_key",
+    "gate_key",
+    "network_node_key",
+    "storage_unit_key",
+    "turret_key",
+    "character_key"
+  ]);
+  const tenant = String(key?.tenant ?? "").trim();
+  return !tenant || tenant === expected;
+}
+
+function firstTenantKey(payload, keys) {
+  for (const key of keys) {
+    const value = payload?.[key];
+    if (value && typeof value === "object") {
+      return value;
+    }
+  }
+  for (const key of keys) {
+    const value = payload?.json?.[key];
+    if (value && typeof value === "object") {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function hasPublicCurrentTribeProfile(current) {

@@ -249,6 +249,122 @@ describe("export-to-sql", () => {
     expect(sql).toContain("Cycle 6 Pilot");
   });
 
+  it("imports only characters with Cycle 6 character-created events when events are exported", () => {
+    const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
+    const exportDir = join(root, "export");
+    const chunkDir = join(root, "chunks");
+    mkdirSync(exportDir, { recursive: true });
+
+    writeFileSync(join(exportDir, "catalog.json"), JSON.stringify({ schemaVersion: "registry.export.v1" }));
+    writeFileSync(join(exportDir, "manifest.json"), JSON.stringify({ schemaVersion: "registry.export_manifest.v1" }));
+    writeFileSync(join(exportDir, "entities.jsonl"), "");
+    writeFileSync(
+      join(exportDir, "events.jsonl"),
+      `${JSON.stringify({
+        id: "event:created:0",
+        kind: "character.created",
+        environment: "stillness",
+        cycle: 6,
+        occurredAt: "2026-06-29T00:00:00.000Z",
+        payload: {
+          json: {
+            key: {
+              item_id: "2112099999"
+            }
+          }
+        }
+      })}\n${JSON.stringify({
+        id: "event:mismatched-tenant:0",
+        kind: "character.created",
+        environment: "stillness",
+        cycle: 6,
+        occurredAt: "2026-06-29T00:01:00.000Z",
+        payload: {
+          json: {
+            assembly_key: {
+              tenant: "liminality",
+              item_id: "2112000001"
+            }
+          }
+        }
+      })}\n`
+    );
+    writeFileSync(
+      join(exportDir, "current_entities.jsonl"),
+      [
+        {
+          entity: {
+            id: "character:stillness:2112099999",
+            slug: "character-2112099999-stillness",
+            name: "Created Pilot",
+            displayName: "Created Pilot",
+            entityType: "character",
+            environment: "stillness",
+            cycle: 6
+          },
+          facts: {
+            source_event_kind: "killmail.created",
+            source_event_id: "event:latest-killmail"
+          }
+        },
+        {
+          entity: {
+            id: "character:stillness:2112000001",
+            slug: "character-2112000001-stillness",
+            name: "Cross Tenant Pilot",
+            displayName: "Cross Tenant Pilot",
+            entityType: "character",
+            environment: "stillness",
+            cycle: 6
+          },
+          facts: {
+            source_event_kind: "character.created",
+            source_event_id: "event:mismatched-tenant:0"
+          }
+        },
+        {
+          entity: {
+            id: "character:stillness:2112088888",
+            slug: "character-2112088888-stillness",
+            name: "Killmail Placeholder",
+            displayName: "Killmail Placeholder",
+            entityType: "character",
+            environment: "stillness",
+            cycle: 6
+          },
+          facts: {
+            source_event_kind: "killmail.created",
+            source_event_id: "event:only-killmail"
+          }
+        }
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n") + "\n"
+    );
+
+    execFileSync(
+      process.execPath,
+      [
+        join(process.cwd(), "scripts", "export-to-sql.mjs"),
+        "--export-dir",
+        exportDir,
+        "--chunk-dir",
+        chunkDir,
+        "--no-transactions"
+      ],
+      { cwd: process.cwd(), stdio: "pipe" }
+    );
+
+    const sql = readFileSync(join(chunkDir, "0000.sql"), "utf8");
+    expect(sql).toContain("character:stillness:2112099999");
+    expect(sql).toContain("Created Pilot");
+    expect(sql).not.toContain("event:mismatched-tenant:0");
+    expect(sql).not.toContain("character:stillness:2112000001");
+    expect(sql).not.toContain("Cross Tenant Pilot");
+    expect(sql).not.toContain("character:stillness:2112088888");
+    expect(sql).not.toContain("Killmail Placeholder");
+  });
+
   it("does not import stale placeholder tribes into current-state tables", () => {
     const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
     const exportDir = join(root, "export");
@@ -314,6 +430,163 @@ describe("export-to-sql", () => {
     expect(sql).not.toContain("Tribe 98000422");
     expect(sql).toContain("tribe:stillness:1000167");
     expect(sql).toContain("Clonebank 86");
+  });
+
+  it("trims current tribe member detail to Cycle 6 created characters", () => {
+    const root = mkdtempSync(join(tmpdir(), "blackrelay-api-export-"));
+    const exportDir = join(root, "export");
+    const chunkDir = join(root, "chunks");
+    mkdirSync(exportDir, { recursive: true });
+
+    writeFileSync(join(exportDir, "catalog.json"), JSON.stringify({ schemaVersion: "registry.export.v1" }));
+    writeFileSync(join(exportDir, "manifest.json"), JSON.stringify({ schemaVersion: "registry.export_manifest.v1" }));
+    writeFileSync(join(exportDir, "entities.jsonl"), "");
+    writeFileSync(
+      join(exportDir, "events.jsonl"),
+      `${JSON.stringify({
+        id: "event:created:valid",
+        kind: "character.created",
+        environment: "stillness",
+        cycle: 6,
+        occurredAt: "2026-06-29T00:00:00.000Z",
+        payload: {
+          json: {
+            key: {
+              tenant: "stillness",
+              item_id: "2112099999"
+            }
+          }
+        }
+      })}\n${JSON.stringify({
+        id: "event:created:moved",
+        kind: "character.created",
+        environment: "stillness",
+        cycle: 6,
+        occurredAt: "2026-06-29T00:00:01.000Z",
+        payload: {
+          json: {
+            key: {
+              tenant: "stillness",
+              item_id: "2112097777"
+            }
+          }
+        }
+      })}\n`
+    );
+    writeFileSync(
+      join(exportDir, "current_entities.jsonl"),
+      `${JSON.stringify({
+        entity: {
+          id: "character:stillness:2112099999",
+          slug: "character-2112099999-stillness",
+          name: "Current Pilot",
+          displayName: "Current Pilot",
+          entityType: "character",
+          environment: "stillness",
+          cycle: 6
+        },
+        derived: {
+          tribe: {
+            entityId: "tribe:stillness:1000167",
+            entityType: "tribe",
+            displayName: "Clonebank 86"
+          }
+        }
+      })}\n${JSON.stringify({
+        entity: {
+          id: "character:stillness:2112097777",
+          slug: "character-2112097777-stillness",
+          name: "Moved Pilot",
+          displayName: "Moved Pilot",
+          entityType: "character",
+          environment: "stillness",
+          cycle: 6
+        },
+        derived: {
+          tribe: {
+            entityId: "tribe:stillness:98000539",
+            entityType: "tribe",
+            displayName: "Silver"
+          }
+        }
+      })}\n${JSON.stringify({
+        entity: {
+          id: "tribe:stillness:1000167",
+          slug: "tribe-1000167-stillness",
+          name: "Clonebank 86",
+          displayName: "Clonebank 86",
+          entityType: "tribe",
+          environment: "stillness",
+          cycle: 6
+        },
+        facts: {
+          tribe_id: "1000167",
+          tag: "CO86"
+        },
+        derived: {
+          memberCount: 2
+        },
+        incomingRelations: [
+          {
+            subjectEntityId: "character:stillness:2112099999",
+            subjectEntityType: "character",
+            subjectDisplayName: "Current Pilot",
+            predicate: "belongs_to",
+            objectEntityId: "tribe:stillness:1000167",
+            objectEntityType: "tribe",
+            objectDisplayName: "Clonebank 86",
+            sourceId: "source:sui:events"
+          },
+          {
+            subjectEntityId: "character:stillness:2112099999",
+            subjectEntityType: "character",
+            subjectDisplayName: "Current Pilot",
+            predicate: "belongs_to",
+            objectEntityId: "tribe:stillness:1000167",
+            objectEntityType: "tribe",
+            objectDisplayName: "Clonebank 86",
+            sourceId: "source:sui:objects"
+          },
+          {
+            subjectEntityId: "character:stillness:2112088888",
+            subjectEntityType: "character",
+            subjectDisplayName: "Killmail Placeholder",
+            predicate: "belongs_to",
+            objectEntityId: "tribe:stillness:1000167",
+            objectEntityType: "tribe",
+            objectDisplayName: "Clonebank 86"
+          },
+          {
+            subjectEntityId: "character:stillness:2112097777",
+            subjectEntityType: "character",
+            subjectDisplayName: "Moved Pilot",
+            predicate: "belongs_to",
+            objectEntityId: "tribe:stillness:1000167",
+            objectEntityType: "tribe",
+            objectDisplayName: "Clonebank 86"
+          }
+        ]
+      })}\n`
+    );
+
+    execFileSync(
+      process.execPath,
+      [
+        join(process.cwd(), "scripts", "export-to-sql.mjs"),
+        "--export-dir",
+        exportDir,
+        "--chunk-dir",
+        chunkDir,
+        "--no-transactions"
+      ],
+      { cwd: process.cwd(), stdio: "pipe" }
+    );
+
+    const sql = readFileSync(join(chunkDir, "0000.sql"), "utf8");
+    expect(sql).toContain("character:stillness:2112099999");
+    expect(sql).not.toContain("character:stillness:2112088888");
+    expect(sql).not.toContain("Killmail Placeholder");
+    expect(sql).toContain('"memberCount":1');
   });
 
   it("does not mirror canonical entities into current-state tables", () => {
